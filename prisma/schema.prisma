@@ -1,0 +1,64 @@
+// Schema do Billing Service: dono de Orcamento e Pagamento (Feature #324).
+// Nenhuma FK cruza a fronteira de servico: a OS e referenciada so por id (ordemServicoId),
+// sem relation com tabela do OS Service. O antigo onDelete: Cascade do Orcamento para
+// OrdemServico saiu, porque a OS vive em outro banco (decisao no README, secao "Banco de dados").
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ProcessedEvent {
+  eventId     String   @id @map("event_id")
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@map("processed_events")
+}
+
+// Mesmo enum do monolito.
+enum EstimateStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// CANCELADO: a saga falhou antes do pagamento. ESTORNADO: refund apos a confirmacao.
+enum StatusPagamento {
+  AGUARDANDO_PAGAMENTO
+  CONFIRMADO
+  RECUSADO
+  CANCELADO
+  ESTORNADO
+}
+
+// Totais congelados como vieram no OrcamentoCalculado; o Billing nao os recalcula.
+model Orcamento {
+  id                 String         @id @default(uuid())
+  ordemServicoId     String         @unique @map("ordem_servico_id")
+  valorTotalServicos Decimal        @map("valor_total_servicos") @db.Decimal(10, 2)
+  valorTotalPecas    Decimal        @map("valor_total_pecas") @db.Decimal(10, 2)
+  valorTotalGeral    Decimal        @map("valor_total_geral") @db.Decimal(10, 2)
+  status             EstimateStatus @default(PENDING)
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+
+  @@map("orcamentos")
+}
+
+// ordemServicoId unico: uma cobranca por OS.
+model Pagamento {
+  id             String          @id @default(uuid())
+  ordemServicoId String          @unique @map("ordem_servico_id")
+  valor          Decimal         @db.Decimal(10, 2)
+  status         StatusPagamento @default(AGUARDANDO_PAGAMENTO)
+  preferenceId   String?         @map("preference_id")
+  linkPagamento  String?         @map("link_pagamento")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  @@map("pagamentos")
+}

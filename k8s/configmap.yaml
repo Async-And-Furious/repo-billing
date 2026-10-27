@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: billing-config
+  namespace: billing
+data:
+  NODE_ENV: production
+  PORT: '3000'
+  JWT_ALGORITHM: RS256
+  JWT_ISSUER: repo-auth-serverless
+  JWT_AUDIENCE: async-furious-project
+  JWT_EXPIRES_IN: '1800'
+  KAFKA_BROKERS: ${kafka_brokers}
+  KAFKA_CONSUMER_GROUP: billing-service
+  MP_NOTIFICATION_URL: ${mp_notification_url}

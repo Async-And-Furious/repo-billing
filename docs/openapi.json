@@ -1,0 +1,294 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/v1/orcamentos/{ordemServicoId}": {
+      "get": {
+        "operationId": "OrcamentoController_consultar",
+        "parameters": [
+          {
+            "name": "ordemServicoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrcamentoResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente ou inválido"
+          },
+          "403": {
+            "description": "Permissões insuficientes"
+          },
+          "404": {
+            "description": "Orçamento não encontrado para a OS"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Consultar o orçamento vigente da OS",
+        "tags": [
+          "Orcamentos"
+        ]
+      }
+    },
+    "/api/v1/orcamentos/{ordemServicoId}/aprovar": {
+      "patch": {
+        "description": "Rota pública (ADR-0011): não identifica o cliente, qualquer pessoa com o id da OS pode chamá-la. Risco aberto, registrado na ADR-0011. Cria a cobrança no Mercado Pago e devolve o link de pagamento; aprovar de novo devolve o mesmo link.",
+        "operationId": "OrcamentoController_aprovar",
+        "parameters": [
+          {
+            "name": "ordemServicoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AprovacaoOrcamentoResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Orçamento recusado ou sem valores definidos"
+          },
+          "404": {
+            "description": "Orçamento não encontrado para a OS"
+          },
+          "502": {
+            "description": "Falha no Mercado Pago; o orçamento continua PENDING"
+          }
+        },
+        "summary": "Aprovar orçamento (pública, ADR-0011)",
+        "tags": [
+          "Orcamentos"
+        ]
+      }
+    },
+    "/api/v1/orcamentos/{ordemServicoId}/recusar": {
+      "patch": {
+        "description": "Rota pública (ADR-0011): não identifica o cliente, qualquer pessoa com o id da OS pode chamá-la. Risco aberto, registrado na ADR-0011.",
+        "operationId": "OrcamentoController_recusar",
+        "parameters": [
+          {
+            "name": "ordemServicoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrcamentoResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Orçamento não está pendente"
+          },
+          "404": {
+            "description": "Orçamento não encontrado para a OS"
+          }
+        },
+        "summary": "Recusar orçamento (pública, ADR-0011)",
+        "tags": [
+          "Orcamentos"
+        ]
+      }
+    },
+    "/api/v1/webhooks/mercado-pago": {
+      "post": {
+        "operationId": "MercadoPagoWebhookController_receber",
+        "parameters": [],
+        "responses": {
+          "501": {
+            "description": "Ainda nao implementado (Feature #325)"
+          }
+        },
+        "summary": "Receber notificacao do Mercado Pago (publica, autenticada por assinatura)",
+        "tags": [
+          "Webhooks"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "description": "Returns the health status of the API",
+        "operationId": "HealthController_check",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "API is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Health check",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/v1/health/live": {
+      "get": {
+        "operationId": "HealthController_live",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/v1/health/ready": {
+      "get": {
+        "operationId": "HealthController_ready",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Async Furious - Billing Service",
+    "description": "Orcamento e Pagamento (Fase 4)",
+    "version": "1.0.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http"
+      }
+    },
+    "schemas": {
+      "OrcamentoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "9b2d7c1e-4f3a-4e8b-a1c2-3d4e5f6a7b8c"
+          },
+          "ordemServicoId": {
+            "type": "string",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "valorTotalServicos": {
+            "type": "number",
+            "example": 450
+          },
+          "valorTotalPecas": {
+            "type": "number",
+            "example": 320.5
+          },
+          "valorTotalGeral": {
+            "type": "number",
+            "example": 770.5
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "APPROVED",
+              "REJECTED"
+            ],
+            "example": "PENDING"
+          }
+        },
+        "required": [
+          "id",
+          "ordemServicoId",
+          "valorTotalServicos",
+          "valorTotalPecas",
+          "valorTotalGeral",
+          "status"
+        ]
+      },
+      "AprovacaoOrcamentoResponseDto": {
+        "type": "object",
+        "properties": {
+          "linkPagamento": {
+            "type": "string",
+            "example": "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=123456789-abc",
+            "description": "init_point da preference do Checkout Pro"
+          }
+        },
+        "required": [
+          "linkPagamento"
+        ]
+      },
+      "HealthResponseDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Health status",
+            "example": "ok"
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "Current server timestamp in ISO format",
+            "example": "2025-01-01T00:00:00.000Z"
+          },
+          "version": {
+            "type": "string",
+            "description": "API version",
+            "example": "1.0.0"
+          }
+        },
+        "required": [
+          "status",
+          "timestamp",
+          "version"
+        ]
+      }
+    }
+  }
+}
