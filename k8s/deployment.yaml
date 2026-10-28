@@ -4,7 +4,7 @@ metadata:
   name: billing-api
   namespace: billing
 spec:
-  replicas: ${app_replicas}
+  replicas: 2
   selector:
     matchLabels:
       app: billing-api
