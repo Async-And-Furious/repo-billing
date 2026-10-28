@@ -55,9 +55,7 @@ export class MercadoPagoAssinaturaGuard implements CanActivate {
       return true;
     } catch (error) {
       if (error instanceof InvalidWebhookSignatureError) {
-        this.logger.warn(
-          `Assinatura do Mercado Pago inválida (${error.reason}), x-request-id=${error.requestId ?? '-'}`
-        );
+        this.logger.warn(`Assinatura do Mercado Pago inválida (${error.reason})`);
         throw new UnauthorizedException('Webhook não autorizado');
       }
       throw error;
