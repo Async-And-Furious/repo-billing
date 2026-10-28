@@ -15,9 +15,13 @@ export interface PagamentoExterno {
 }
 
 // Chave de idempotência de entrada do webhook: id do pagamento no provedor + tipo (payment.{status}).
+// ordemServicoId e resultado (desfecho do processamento) são gravados junto com a linha, para
+// reconciliar depois o que a notificação fez.
 export interface NotificacaoRecebida {
   providerEventId: string;
   tipo: string;
+  ordemServicoId?: string;
+  resultado?: string;
 }
 
 export interface IOrcamentoRepository {

@@ -281,13 +281,41 @@ describe('Rotas do Billing', () => {
           ordemServicoId,
           valor: 770.5,
           status: 'CONFIRMADO',
-          linkPagamento: 'https://mp/pref-1',
+          linkPagamento: null,
           pagamentoExternoId: '184177738229',
           criadoEm: '2026-10-27T10:00:00.000Z',
           atualizadoEm: '2026-10-27T11:00:00.000Z',
         });
       }
     );
+
+    it('devolve o link enquanto o Pagamento aguarda pagamento', async () => {
+      pagamentos.set(
+        ordemServicoId,
+        Pagamento.reconstituir({
+          id: 'pag-1',
+          ordemServicoId,
+          valor: 770.5,
+          status: StatusPagamento.AGUARDANDO_PAGAMENTO,
+          preferenceId: 'pref-1',
+          linkPagamento: 'https://mp/pref-1',
+          pagamentoExternoId: null,
+          criadoEm: new Date('2026-10-27T10:00:00Z'),
+          atualizadoEm: new Date('2026-10-27T11:00:00Z'),
+        })
+      );
+
+      const { body } = await request(server)
+        .get(rota)
+        .set('Authorization', `Bearer ${token({ role: 'ADMIN' })}`)
+        .expect(200);
+
+      expect(body).toMatchObject({
+        status: 'AGUARDANDO_PAGAMENTO',
+        linkPagamento: 'https://mp/pref-1',
+        pagamentoExternoId: null,
+      });
+    });
 
     it('OS sem pagamento devolve 404', async () => {
       await request(server)
@@ -469,6 +497,19 @@ describe('Rotas do Billing', () => {
 
       await request(server).post(rota).set(assinatura()).expect(502);
       expect(salvarComNotificacao).not.toHaveBeenCalled();
+    });
+
+    it('Pagamento que muda de estado durante a gravação devolve 409 (o Mercado Pago reenvia)', async () => {
+      reconsulta('approved');
+      // Simula a corrida: a gravação perde porque a saga cancelou o Pagamento antes, com outro id.
+      salvarComNotificacao.mockImplementationOnce(() => {
+        pagamentoDaOs(StatusPagamento.CANCELADO, 'mp-de-outra-cobranca');
+        return Promise.resolve(false);
+      });
+
+      await request(server).post(rota).set(assinatura()).expect(409);
+
+      expect(publicador.publicar).not.toHaveBeenCalled();
     });
   });
 });

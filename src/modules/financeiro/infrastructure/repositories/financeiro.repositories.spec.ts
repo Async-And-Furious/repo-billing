@@ -274,7 +274,12 @@ describe('Repositórios do financeiro', () => {
         p.confirmar('mp-1');
         return p;
       };
-      const notificacao = { providerEventId: 'mp-1', tipo: 'payment.approved' };
+      const notificacao = {
+        providerEventId: 'mp-1',
+        tipo: 'payment.approved',
+        ordemServicoId,
+        resultado: 'CONFIRMADO',
+      };
       const repositorio = () =>
         new PagamentoRepository(prismaEmMemoria() as unknown as PrismaService);
 

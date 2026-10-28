@@ -19,7 +19,8 @@ export class PagamentoResponseDto {
     nullable: true,
     type: String,
     example: 'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=123456789-abc',
-    description: 'init_point da preference do Checkout Pro',
+    description:
+      'init_point da preference do Checkout Pro; nulo quando o Pagamento já não aguarda pagamento (o link deixa de ser devolvido).',
   })
   linkPagamento!: string | null;
 
@@ -44,7 +45,9 @@ export class PagamentoResponseDto {
       ordemServicoId: pagamento.getOrdemServicoId(),
       valor: pagamento.getValor(),
       status: pagamento.getStatus(),
-      linkPagamento: pagamento.getLinkPagamento(),
+      // Fora de AGUARDANDO_PAGAMENTO o link não é mais devolvido: evita incentivar o reuso de um link
+      // cujo pagamento já foi confirmado, recusado ou cancelado.
+      linkPagamento: pagamento.estaPendente() ? pagamento.getLinkPagamento() : null,
       pagamentoExternoId: pagamento.getPagamentoExternoId(),
       criadoEm: pagamento.getCriadoEm(),
       atualizadoEm: pagamento.getAtualizadoEm(),

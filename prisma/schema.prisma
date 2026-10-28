@@ -67,10 +67,14 @@ model Pagamento {
 
 // Idempotencia de entrada do webhook: providerEventId (id do pagamento no Mercado Pago) + tipo
 // (payment.{status}). Gravada na mesma transacao que atualiza o Pagamento; reentrega viola o unique.
+// ordemServicoId e resultado (desfecho do ResultadoNotificacao) sao nulos nas linhas anteriores a
+// essas colunas e nas notificacoes que nao gravam linha.
 model WebhookRecebido {
   id              String   @id @default(uuid())
   providerEventId String   @map("provider_event_id")
   tipo            String
+  ordemServicoId  String?  @map("ordem_servico_id")
+  resultado       String?
   recebidoEm      DateTime @default(now()) @map("recebido_em")
 
   @@unique([providerEventId, tipo])

@@ -27,9 +27,7 @@ export class PagamentoRepository implements IPagamentoRepository {
   ): Promise<boolean> {
     try {
       await this.prisma.$transaction(async (tx) => {
-        await tx.webhookRecebido.create({
-          data: { providerEventId: notificacao.providerEventId, tipo: notificacao.tipo },
-        });
+        await tx.webhookRecebido.create({ data: this.dadosDoWebhook(notificacao) });
         const { count } = await tx.pagamento.updateMany({
           where: { id: pagamento.getId(), status: statusAnterior },
           data: {
@@ -52,7 +50,12 @@ export class PagamentoRepository implements IPagamentoRepository {
 
   async jaRecebida(notificacao: NotificacaoRecebida): Promise<boolean> {
     const registro = await this.prisma.webhookRecebido.findUnique({
-      where: { providerEventId_tipo: notificacao },
+      where: {
+        providerEventId_tipo: {
+          providerEventId: notificacao.providerEventId,
+          tipo: notificacao.tipo,
+        },
+      },
       select: { id: true },
     });
     return registro !== null;
@@ -60,7 +63,7 @@ export class PagamentoRepository implements IPagamentoRepository {
 
   async registrar(notificacao: NotificacaoRecebida): Promise<boolean> {
     try {
-      await this.prisma.webhookRecebido.create({ data: notificacao });
+      await this.prisma.webhookRecebido.create({ data: this.dadosDoWebhook(notificacao) });
       return true;
     } catch (error) {
       if (violouUnicidade(error)) {
@@ -68,5 +71,15 @@ export class PagamentoRepository implements IPagamentoRepository {
       }
       throw error;
     }
+  }
+
+  // undefined (notificação sem OS nem desfecho) deixa a coluna nula, como o Prisma trata campo não informado.
+  private dadosDoWebhook(notificacao: NotificacaoRecebida) {
+    return {
+      providerEventId: notificacao.providerEventId,
+      tipo: notificacao.tipo,
+      ordemServicoId: notificacao.ordemServicoId,
+      resultado: notificacao.resultado,
+    };
   }
 }

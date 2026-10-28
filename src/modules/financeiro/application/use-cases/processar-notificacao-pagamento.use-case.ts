@@ -25,9 +25,15 @@ const STATUS_RECUSA = ['rejected', 'cancelled'];
 // Compara em centavos: a diferença de um centavo nunca depende do erro de ponto flutuante.
 const emCentavos = (valor: number): number => Math.round(valor * 100);
 
-const notificacao = (externo: PagamentoExterno): NotificacaoRecebida => ({
+const notificacao = (
+  externo: PagamentoExterno,
+  pagamento: Pagamento,
+  resultado: ResultadoNotificacao
+): NotificacaoRecebida => ({
   providerEventId: externo.id,
   tipo: `payment.${externo.status}`,
+  ordemServicoId: pagamento.getOrdemServicoId(),
+  resultado,
 });
 
 export class ProcessarNotificacaoPagamentoUseCase {
@@ -81,7 +87,7 @@ export class ProcessarNotificacaoPagamentoUseCase {
 
     const statusAnterior = pagamento.getStatus();
     pagamento.confirmar(externo.id);
-    if (!(await this.gravar(pagamento, statusAnterior, externo))) {
+    if (!(await this.gravar(pagamento, statusAnterior, externo, 'CONFIRMADO'))) {
       return 'JA_PROCESSADO';
     }
     await this.publicador.publicar(
@@ -98,7 +104,11 @@ export class ProcessarNotificacaoPagamentoUseCase {
     pagamento: Pagamento,
     externo: PagamentoExterno
   ): Promise<ResultadoNotificacao> {
-    const recebida = notificacao(externo);
+    const resultado: ResultadoNotificacao =
+      pagamento.getStatus() === StatusPagamento.CANCELADO
+        ? 'ESTORNADO_PAGAMENTO_ATRASADO'
+        : 'ESTORNADO_PAGAMENTO_DUPLICADO';
+    const recebida = notificacao(externo, pagamento, resultado);
     if (await this.pagamentoRepository.jaRecebida(recebida)) {
       return 'JA_PROCESSADO';
     }
@@ -108,9 +118,7 @@ export class ProcessarNotificacaoPagamentoUseCase {
     if (!(await this.pagamentoRepository.registrar(recebida))) {
       return 'JA_PROCESSADO';
     }
-    return pagamento.getStatus() === StatusPagamento.CANCELADO
-      ? 'ESTORNADO_PAGAMENTO_ATRASADO'
-      : 'ESTORNADO_PAGAMENTO_DUPLICADO';
+    return resultado;
   }
 
   private async recusado(
@@ -123,7 +131,7 @@ export class ProcessarNotificacaoPagamentoUseCase {
 
     const statusAnterior = pagamento.getStatus();
     pagamento.recusar(externo.id);
-    if (!(await this.gravar(pagamento, statusAnterior, externo))) {
+    if (!(await this.gravar(pagamento, statusAnterior, externo, 'RECUSADO'))) {
       return 'JA_PROCESSADO';
     }
     await this.publicador.publicar(
@@ -139,13 +147,14 @@ export class ProcessarNotificacaoPagamentoUseCase {
   private async gravar(
     pagamento: Pagamento,
     statusAnterior: StatusPagamento,
-    externo: PagamentoExterno
+    externo: PagamentoExterno,
+    resultado: ResultadoNotificacao
   ): Promise<boolean> {
     if (
       await this.pagamentoRepository.salvarComNotificacao(
         pagamento,
         statusAnterior,
-        notificacao(externo)
+        notificacao(externo, pagamento, resultado)
       )
     ) {
       return true;

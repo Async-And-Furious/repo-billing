@@ -17,6 +17,8 @@ import type { Request } from 'express';
 @Injectable()
 export class MercadoPagoAssinaturaGuard implements CanActivate {
   private readonly logger = new Logger(MercadoPagoAssinaturaGuard.name);
+  // Aviso de configuração ausente sai uma vez por processo, não a cada notificação recebida.
+  private avisouSemSegredo = false;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -34,7 +36,12 @@ export class MercadoPagoAssinaturaGuard implements CanActivate {
 
     const secret = this.config.get<string>('MP_WEBHOOK_SECRET');
     if (!secret) {
-      this.logger.error('MP_WEBHOOK_SECRET não configurado: notificação recusada.');
+      if (!this.avisouSemSegredo) {
+        this.avisouSemSegredo = true;
+        this.logger.warn(
+          'MP_WEBHOOK_SECRET não configurado: notificações do Mercado Pago serão recusadas com 401.'
+        );
+      }
       throw new UnauthorizedException('Webhook não autorizado');
     }
 

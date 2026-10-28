@@ -78,7 +78,12 @@ describe('ProcessarNotificacaoPagamentoUseCase', () => {
       expect(confirmado.getStatus()).toBe(StatusPagamento.CONFIRMADO);
       expect(confirmado.getPagamentoExternoId()).toBe('mp-1');
       expect(statusAnterior).toBe(StatusPagamento.AGUARDANDO_PAGAMENTO);
-      expect(notificacao).toEqual({ providerEventId: 'mp-1', tipo: 'payment.approved' });
+      expect(notificacao).toEqual({
+        providerEventId: 'mp-1',
+        tipo: 'payment.approved',
+        ordemServicoId,
+        resultado: 'CONFIRMADO',
+      });
       expect(publicador.publicar).toHaveBeenCalledWith(
         new PagamentoConfirmado(ordemServicoId, 'pag-1')
       );
@@ -165,7 +170,12 @@ describe('ProcessarNotificacaoPagamentoUseCase', () => {
   });
 
   describe('approved indevido: estorna pelo gateway, sem confirmar nem publicar', () => {
-    const notificacaoAprovada = { providerEventId: 'mp-1', tipo: 'payment.approved' };
+    const notificacaoAprovada = (resultado: string) => ({
+      providerEventId: 'mp-1',
+      tipo: 'payment.approved',
+      ordemServicoId,
+      resultado,
+    });
 
     // O Pagamento original nunca é regravado: nem status, nem id do pagamento original.
     const semTocarNoPagamento = () => {
@@ -184,7 +194,9 @@ describe('ProcessarNotificacaoPagamentoUseCase', () => {
         await expect(useCase.execute('mp-1')).resolves.toBe('ESTORNADO_PAGAMENTO_ATRASADO');
 
         expect(gateway.estornar).toHaveBeenCalledWith('mp-1');
-        expect(pagamentoRepository.registrar).toHaveBeenCalledWith(notificacaoAprovada);
+        expect(pagamentoRepository.registrar).toHaveBeenCalledWith(
+          notificacaoAprovada('ESTORNADO_PAGAMENTO_ATRASADO')
+        );
         semTocarNoPagamento();
       });
 
@@ -217,7 +229,9 @@ describe('ProcessarNotificacaoPagamentoUseCase', () => {
         await expect(useCase.execute('mp-1')).resolves.toBe('ESTORNADO_PAGAMENTO_DUPLICADO');
 
         expect(gateway.estornar).toHaveBeenCalledWith('mp-1');
-        expect(pagamentoRepository.registrar).toHaveBeenCalledWith(notificacaoAprovada);
+        expect(pagamentoRepository.registrar).toHaveBeenCalledWith(
+          notificacaoAprovada('ESTORNADO_PAGAMENTO_DUPLICADO')
+        );
         semTocarNoPagamento();
       });
     });
@@ -235,7 +249,9 @@ describe('ProcessarNotificacaoPagamentoUseCase', () => {
         pagamentoRepository.jaRecebida.mockResolvedValue(true);
 
         await expect(useCase.execute('mp-1')).resolves.toBe('JA_PROCESSADO');
-        expect(pagamentoRepository.jaRecebida).toHaveBeenCalledWith(notificacaoAprovada);
+        expect(pagamentoRepository.jaRecebida).toHaveBeenCalledWith(
+          expect.objectContaining({ providerEventId: 'mp-1', tipo: 'payment.approved' })
+        );
         expect(gateway.estornar).not.toHaveBeenCalled();
         expect(pagamentoRepository.registrar).not.toHaveBeenCalled();
       });
@@ -285,7 +301,12 @@ describe('ProcessarNotificacaoPagamentoUseCase', () => {
         expect(recusado.getStatus()).toBe(StatusPagamento.RECUSADO);
         expect(recusado.getPagamentoExternoId()).toBe('mp-1');
         expect(statusAnterior).toBe(StatusPagamento.AGUARDANDO_PAGAMENTO);
-        expect(notificacao).toEqual({ providerEventId: 'mp-1', tipo: `payment.${status}` });
+        expect(notificacao).toEqual({
+          providerEventId: 'mp-1',
+          tipo: `payment.${status}`,
+          ordemServicoId,
+          resultado: 'RECUSADO',
+        });
         expect(publicador.publicar).toHaveBeenCalledWith(
           new PagamentoRecusado(ordemServicoId, 'pag-1')
         );

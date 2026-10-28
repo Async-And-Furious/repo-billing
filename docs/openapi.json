@@ -190,6 +190,24 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Id da requisição enviado pelo Mercado Pago, usado no manifesto da assinatura. Obrigatório junto com x-signature.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-signature",
+            "in": "header",
+            "description": "Assinatura HMAC-SHA256 do Mercado Pago (`ts=...,v1=...`). Obrigatória quando type=payment com data.id; ausente ou inválida devolve 401.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -366,7 +384,7 @@
             "type": "string",
             "nullable": true,
             "example": "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=123456789-abc",
-            "description": "init_point da preference do Checkout Pro"
+            "description": "init_point da preference do Checkout Pro; nulo quando o Pagamento já não aguarda pagamento (o link deixa de ser devolvido)."
           },
           "pagamentoExternoId": {
             "type": "string",

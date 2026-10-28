@@ -1,5 +1,5 @@
 import { Controller, HttpCode, HttpStatus, Logger, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiHeader, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Public } from '../../../../auth/decorators/public.decorator';
 import {
@@ -44,6 +44,18 @@ export class MercadoPagoWebhookController {
   })
   @ApiQuery({ name: 'data.id', required: false })
   @ApiQuery({ name: 'type', required: false })
+  @ApiHeader({
+    name: 'x-signature',
+    required: false,
+    description:
+      'Assinatura HMAC-SHA256 do Mercado Pago (`ts=...,v1=...`). Obrigatória quando type=payment com data.id; ausente ou inválida devolve 401.',
+  })
+  @ApiHeader({
+    name: 'x-request-id',
+    required: false,
+    description:
+      'Id da requisição enviado pelo Mercado Pago, usado no manifesto da assinatura. Obrigatório junto com x-signature.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Notificação recebida (inclusive reentrega ou ignorada).',
@@ -58,8 +70,9 @@ export class MercadoPagoWebhookController {
     description: 'Falha ao reconsultar ou estornar no Mercado Pago (o Mercado Pago reenvia).',
   })
   async receber(@Query('data.id') dataId?: string, @Query('type') tipo?: string): Promise<void> {
+    // Sem validação de assinatura: o type vem da internet, então não entra no log (só texto fixo).
     if (tipo !== 'payment' || !dataId) {
-      this.logger.log(`Notificação do Mercado Pago ignorada: type=${tipo ?? '-'}`);
+      this.logger.debug('Notificação do Mercado Pago ignorada (não é type=payment com data.id).');
       return;
     }
 

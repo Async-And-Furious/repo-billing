@@ -71,6 +71,24 @@ describe('MercadoPagoAssinaturaGuard', () => {
     expect(() => guard.canActivate(contexto(notificacao, headers))).toThrow(UnauthorizedException);
   });
 
+  it('sem a chave, avisa uma vez só e continua recusando cada notificação', () => {
+    delete env['MP_WEBHOOK_SECRET'];
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    warn.mockClear();
+    const semChave = new MercadoPagoAssinaturaGuard(config);
+    const headers = { 'x-signature': assinar(dataId, requestId), 'x-request-id': requestId };
+
+    expect(() => semChave.canActivate(contexto(notificacao, headers))).toThrow(
+      UnauthorizedException
+    );
+    expect(() => semChave.canActivate(contexto(notificacao, headers))).toThrow(
+      UnauthorizedException
+    );
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('MP_WEBHOOK_SECRET'));
+  });
+
   it.each([
     ['IPN legado (?id=&topic=)', { id: '1', topic: 'payment' }],
     ['merchant_order', { type: 'topic_merchant_order_wh', 'data.id': '1' }],
