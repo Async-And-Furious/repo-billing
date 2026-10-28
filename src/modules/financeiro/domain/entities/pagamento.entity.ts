@@ -21,6 +21,10 @@ interface PagamentoProps {
   status: StatusPagamento;
   preferenceId: string | null;
   linkPagamento: string | null;
+  // Id do pagamento no Mercado Pago, gravado quando o webhook o confirma ou recusa (único).
+  pagamentoExternoId: string | null;
+  criadoEm: Date;
+  atualizadoEm: Date;
 }
 
 // AGUARDANDO_PAGAMENTO → CONFIRMADO | RECUSADO | CANCELADO; CONFIRMADO → ESTORNADO.
@@ -33,6 +37,7 @@ export class Pagamento {
     if (!(valor > 0)) {
       throw new DomainException('Valor do pagamento deve ser positivo.');
     }
+    const agora = new Date();
     return new Pagamento({
       id: crypto.randomUUID(),
       ordemServicoId,
@@ -40,6 +45,9 @@ export class Pagamento {
       status: StatusPagamento.AGUARDANDO_PAGAMENTO,
       preferenceId: cobranca.preferenceId,
       linkPagamento: cobranca.linkPagamento,
+      pagamentoExternoId: null,
+      criadoEm: agora,
+      atualizadoEm: agora,
     });
   }
 
@@ -47,12 +55,14 @@ export class Pagamento {
     return new Pagamento({ ...props });
   }
 
-  confirmar(): void {
+  confirmar(pagamentoExternoId: string): void {
     this.transicionar(StatusPagamento.AGUARDANDO_PAGAMENTO, StatusPagamento.CONFIRMADO);
+    this.props.pagamentoExternoId = pagamentoExternoId;
   }
 
-  recusar(): void {
+  recusar(pagamentoExternoId: string): void {
     this.transicionar(StatusPagamento.AGUARDANDO_PAGAMENTO, StatusPagamento.RECUSADO);
+    this.props.pagamentoExternoId = pagamentoExternoId;
   }
 
   // Saga falhou antes do pagamento.
@@ -86,6 +96,15 @@ export class Pagamento {
   }
   getLinkPagamento(): string | null {
     return this.props.linkPagamento;
+  }
+  getPagamentoExternoId(): string | null {
+    return this.props.pagamentoExternoId;
+  }
+  getCriadoEm(): Date {
+    return this.props.criadoEm;
+  }
+  getAtualizadoEm(): Date {
+    return this.props.atualizadoEm;
   }
 
   private transicionar(de: StatusPagamento, para: StatusPagamento): void {

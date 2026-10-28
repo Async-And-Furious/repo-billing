@@ -1,6 +1,24 @@
 import type { Orcamento } from '../entities/orcamento.entity';
-import type { Cobranca, Pagamento } from '../entities/pagamento.entity';
+import type { Cobranca, Pagamento, StatusPagamento } from '../entities/pagamento.entity';
 import type { EventoOrcamento } from '../events/orcamento.events';
+import type { EventoPagamento } from '../events/pagamento.events';
+
+export type EventoBilling = EventoOrcamento | EventoPagamento;
+
+// Pagamento como o Mercado Pago o reporta na reconsulta GET /v1/payments/{id}.
+export interface PagamentoExterno {
+  id: string;
+  status: string;
+  // external_reference da preference = ordemServicoId.
+  referenciaExterna: string | null;
+  valor: number | null;
+}
+
+// Chave de idempotência de entrada do webhook: id do pagamento no provedor + tipo (payment.{status}).
+export interface NotificacaoRecebida {
+  providerEventId: string;
+  tipo: string;
+}
 
 export interface IOrcamentoRepository {
   findByOrdemServicoId(ordemServicoId: string): Promise<Orcamento | null>;
@@ -16,14 +34,31 @@ export interface IOrcamentoRepository {
 
 export interface IPagamentoRepository {
   findByOrdemServicoId(ordemServicoId: string): Promise<Pagamento | null>;
+  // Numa única transação: grava webhook_recebido e persiste a transição do Pagamento (status e id
+  // externo), condicionada a `statusAnterior`. False, sem efeito algum, se a notificação já foi
+  // vista (unique em webhook_recebido ou no id externo) ou se o Pagamento já mudou de status.
+  salvarComNotificacao(
+    pagamento: Pagamento,
+    statusAnterior: StatusPagamento,
+    notificacao: NotificacaoRecebida
+  ): Promise<boolean>;
+  // Notificações que não mudam o Pagamento (estorno de pagamento indevido): a idempotência é só o
+  // webhook_recebido. `jaRecebida` evita estornar de novo numa reentrega; `registrar` grava a
+  // notificação e devolve false se outra entrega chegou antes (unique em webhook_recebido).
+  jaRecebida(notificacao: NotificacaoRecebida): Promise<boolean>;
+  registrar(notificacao: NotificacaoRecebida): Promise<boolean>;
 }
 
 export interface IGatewayPagamento {
   criarCobranca(ordemServicoId: string, valor: number): Promise<Cobranca>;
+  // null quando o provedor não conhece o pagamento (404); falha/timeout sobe como 502.
+  consultarPagamento(pagamentoExternoId: string): Promise<PagamentoExterno | null>;
+  // Estorno total, idempotente por pagamento; falha/timeout sobe como 502.
+  estornar(pagamentoExternoId: string): Promise<void>;
 }
 
 export interface IPublicadorEventos {
-  publicar(evento: EventoOrcamento): Promise<void>;
+  publicar(evento: EventoBilling): Promise<void>;
 }
 
 export const ORCAMENTO_REPOSITORY = Symbol('ORCAMENTO_REPOSITORY');

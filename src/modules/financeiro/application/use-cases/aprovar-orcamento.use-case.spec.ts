@@ -41,6 +41,9 @@ describe('AprovarOrcamentoUseCase', () => {
       status: StatusPagamento.AGUARDANDO_PAGAMENTO,
       preferenceId: 'pref-antiga',
       linkPagamento,
+      pagamentoExternoId: null,
+      criadoEm: new Date('2026-10-27T10:00:00Z'),
+      atualizadoEm: new Date('2026-10-27T10:00:00Z'),
     });
 
   beforeEach(() => {
@@ -51,8 +54,17 @@ describe('AprovarOrcamentoUseCase', () => {
       aprovarComPagamento: jest.fn().mockResolvedValue(true),
       recusarSePendente: jest.fn(),
     };
-    pagamentoRepository = { findByOrdemServicoId: jest.fn().mockResolvedValue(null) };
-    gateway = { criarCobranca: jest.fn().mockResolvedValue(cobranca) };
+    pagamentoRepository = {
+      findByOrdemServicoId: jest.fn().mockResolvedValue(null),
+      salvarComNotificacao: jest.fn(),
+      jaRecebida: jest.fn(),
+      registrar: jest.fn(),
+    };
+    gateway = {
+      criarCobranca: jest.fn().mockResolvedValue(cobranca),
+      consultarPagamento: jest.fn(),
+      estornar: jest.fn(),
+    };
     publicador = { publicar: jest.fn().mockResolvedValue(undefined) };
     useCase = new AprovarOrcamentoUseCase(
       orcamentoRepository,

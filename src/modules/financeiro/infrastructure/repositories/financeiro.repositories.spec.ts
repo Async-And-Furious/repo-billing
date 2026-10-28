@@ -24,6 +24,7 @@ describe('Repositórios do financeiro', () => {
     status: StatusPagamentoPrisma.AGUARDANDO_PAGAMENTO,
     preferenceId: 'pref-1',
     linkPagamento: 'https://mp/pref-1',
+    mercadoPagoPaymentId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -35,6 +36,7 @@ describe('Repositórios do financeiro', () => {
   const prisma = {
     orcamento: { findUnique: jest.fn(), create: jest.fn(), updateMany: jest.fn() },
     pagamento: { findUnique: jest.fn() },
+    webhookRecebido: { findUnique: jest.fn(), create: jest.fn() },
     $transaction: jest.fn((fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
   };
   const orcamentoRepository = new OrcamentoRepository(prisma as unknown as PrismaService);
@@ -166,11 +168,197 @@ describe('Repositórios do financeiro', () => {
       expect(encontrado?.getValor()).toBe(770.5);
       expect(encontrado?.getStatus()).toBe(StatusPagamento.AGUARDANDO_PAGAMENTO);
       expect(encontrado?.getLinkPagamento()).toBe('https://mp/pref-1');
+      expect(encontrado?.getCriadoEm()).toBe(pagamentoRecord.createdAt);
+      expect(encontrado?.getAtualizadoEm()).toBe(pagamentoRecord.updatedAt);
     });
 
     it('devolve null quando a OS não tem pagamento', async () => {
       prisma.pagamento.findUnique.mockResolvedValue(null);
       await expect(pagamentoRepository.findByOrdemServicoId(ordemServicoId)).resolves.toBeNull();
+    });
+
+    describe('notificações que não mudam o Pagamento (estorno de aprovado indevido)', () => {
+      const recebida = { providerEventId: 'mp-1', tipo: 'payment.approved' };
+
+      it('jaRecebida consulta pelo unique (providerEventId, tipo)', async () => {
+        prisma.webhookRecebido.findUnique.mockResolvedValue({ id: 'w-1' });
+        await expect(pagamentoRepository.jaRecebida(recebida)).resolves.toBe(true);
+        expect(prisma.webhookRecebido.findUnique).toHaveBeenCalledWith({
+          where: { providerEventId_tipo: recebida },
+          select: { id: true },
+        });
+
+        prisma.webhookRecebido.findUnique.mockResolvedValue(null);
+        await expect(pagamentoRepository.jaRecebida(recebida)).resolves.toBe(false);
+      });
+
+      it('registrar grava a notificação e devolve true', async () => {
+        prisma.webhookRecebido.create.mockResolvedValue({});
+        await expect(pagamentoRepository.registrar(recebida)).resolves.toBe(true);
+        expect(prisma.webhookRecebido.create).toHaveBeenCalledWith({ data: recebida });
+      });
+
+      it('registrar a mesma notificação de novo viola o unique e devolve false', async () => {
+        prisma.webhookRecebido.create.mockRejectedValue(violacaoUnicidade());
+        await expect(pagamentoRepository.registrar(recebida)).resolves.toBe(false);
+      });
+
+      it('registrar propaga outros erros do banco', async () => {
+        prisma.webhookRecebido.create.mockRejectedValue(new Error('conexão perdida'));
+        await expect(pagamentoRepository.registrar(recebida)).rejects.toThrow('conexão perdida');
+      });
+    });
+
+    describe('salvarComNotificacao (transação com webhook_recebido)', () => {
+      interface Banco {
+        webhooks: { providerEventId: string; tipo: string }[];
+        pagamento: { status: string; mercadoPagoPaymentId: string | null };
+      }
+      let banco: Banco;
+      let falhaNoUpdate: Error | null;
+
+      // Banco em memória com rollback: se o callback da transação lança, o estado volta ao
+      // snapshot do início, como o Prisma faz com a transação de verdade.
+      const prismaEmMemoria = () => {
+        const txFalso = {
+          webhookRecebido: {
+            create: ({ data }: { data: { providerEventId: string; tipo: string } }) => {
+              if (
+                banco.webhooks.some(
+                  (w) => w.providerEventId === data.providerEventId && w.tipo === data.tipo
+                )
+              ) {
+                return Promise.reject(violacaoUnicidade());
+              }
+              banco.webhooks.push(data);
+              return Promise.resolve(data);
+            },
+          },
+          pagamento: {
+            updateMany: ({
+              where,
+              data,
+            }: {
+              where: { status: string };
+              data: { status: string; mercadoPagoPaymentId: string | null };
+            }) => {
+              if (falhaNoUpdate) {
+                return Promise.reject(falhaNoUpdate);
+              }
+              if (banco.pagamento.status !== where.status) {
+                return Promise.resolve({ count: 0 });
+              }
+              banco.pagamento = { ...data };
+              return Promise.resolve({ count: 1 });
+            },
+          },
+        };
+        return {
+          $transaction: async (fn: (client: typeof txFalso) => Promise<unknown>) => {
+            const snapshot = structuredClone(banco);
+            try {
+              return await fn(txFalso);
+            } catch (error) {
+              banco = snapshot;
+              throw error;
+            }
+          },
+        };
+      };
+
+      const confirmado = () => {
+        const p = Pagamento.criar(ordemServicoId, 770.5, {
+          preferenceId: 'pref-1',
+          linkPagamento: 'https://mp/pref-1',
+        });
+        p.confirmar('mp-1');
+        return p;
+      };
+      const notificacao = { providerEventId: 'mp-1', tipo: 'payment.approved' };
+      const repositorio = () =>
+        new PagamentoRepository(prismaEmMemoria() as unknown as PrismaService);
+
+      beforeEach(() => {
+        banco = {
+          webhooks: [],
+          pagamento: { status: 'AGUARDANDO_PAGAMENTO', mercadoPagoPaymentId: null },
+        };
+        falhaNoUpdate = null;
+      });
+
+      it('grava o webhook e a transição do Pagamento juntos', async () => {
+        await expect(
+          repositorio().salvarComNotificacao(
+            confirmado(),
+            StatusPagamento.AGUARDANDO_PAGAMENTO,
+            notificacao
+          )
+        ).resolves.toBe(true);
+
+        expect(banco.webhooks).toEqual([notificacao]);
+        expect(banco.pagamento).toEqual({ status: 'CONFIRMADO', mercadoPagoPaymentId: 'mp-1' });
+      });
+
+      it('reentrega da mesma notificação: false e nada muda', async () => {
+        const repo = repositorio();
+        await repo.salvarComNotificacao(
+          confirmado(),
+          StatusPagamento.AGUARDANDO_PAGAMENTO,
+          notificacao
+        );
+        const depoisDaPrimeira = structuredClone(banco);
+
+        await expect(
+          repo.salvarComNotificacao(confirmado(), StatusPagamento.AGUARDANDO_PAGAMENTO, notificacao)
+        ).resolves.toBe(false);
+        expect(banco).toEqual(depoisDaPrimeira);
+      });
+
+      it('falha ao atualizar o Pagamento desfaz também o webhook_recebido (rollback)', async () => {
+        falhaNoUpdate = new Error('conexão perdida');
+
+        await expect(
+          repositorio().salvarComNotificacao(
+            confirmado(),
+            StatusPagamento.AGUARDANDO_PAGAMENTO,
+            notificacao
+          )
+        ).rejects.toThrow('conexão perdida');
+
+        expect(banco.webhooks).toEqual([]);
+        expect(banco.pagamento).toEqual({
+          status: 'AGUARDANDO_PAGAMENTO',
+          mercadoPagoPaymentId: null,
+        });
+      });
+
+      it('Pagamento que já mudou de status: false e o webhook também é desfeito', async () => {
+        banco.pagamento.status = 'CANCELADO';
+
+        await expect(
+          repositorio().salvarComNotificacao(
+            confirmado(),
+            StatusPagamento.AGUARDANDO_PAGAMENTO,
+            notificacao
+          )
+        ).resolves.toBe(false);
+
+        expect(banco.webhooks).toEqual([]);
+        expect(banco.pagamento.status).toBe('CANCELADO');
+      });
+
+      it('id externo já ligado a outro Pagamento (unique): false e webhook desfeito', async () => {
+        falhaNoUpdate = violacaoUnicidade();
+
+        await expect(
+          repositorio().salvarComNotificacao(
+            confirmado(),
+            StatusPagamento.AGUARDANDO_PAGAMENTO,
+            notificacao
+          )
+        ).resolves.toBe(false);
+        expect(banco.webhooks).toEqual([]);
+      });
     });
   });
 });

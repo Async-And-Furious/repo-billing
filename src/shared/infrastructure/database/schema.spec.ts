@@ -20,7 +20,7 @@ describe('schema e migrations do Billing', () => {
 
   it('só tem models do próprio Billing (nada de Peca, Servico, OsPeca, OsServico ou OrdemServico)', () => {
     const models = [...schema.matchAll(/^model (\w+) \{/gm)].map((m) => m[1]);
-    expect(models.sort()).toEqual(['Orcamento', 'Pagamento', 'ProcessedEvent']);
+    expect(models.sort()).toEqual(['Orcamento', 'Pagamento', 'ProcessedEvent', 'WebhookRecebido']);
   });
 
   it('nenhuma FK: sem @relation no schema nem FOREIGN KEY nas migrations', () => {
@@ -46,6 +46,23 @@ describe('schema e migrations do Billing', () => {
     const pagamento = bloco('model', 'Pagamento');
     expect(pagamento).toMatch(/preferenceId\s+String\?/);
     expect(pagamento).toMatch(/linkPagamento\s+String\?/);
+  });
+
+  it('Pagamento guarda o id do pagamento no Mercado Pago, único', () => {
+    expect(bloco('model', 'Pagamento')).toMatch(
+      /mercadoPagoPaymentId\s+String\?\s+@unique\s+@map\("mercado_pago_payment_id"\)/
+    );
+    expect(migrations).toContain(
+      'CREATE UNIQUE INDEX "pagamentos_mercado_pago_payment_id_key" ON "pagamentos"("mercado_pago_payment_id")'
+    );
+  });
+
+  it('webhook_recebido tem unique (providerEventId, tipo) na migration', () => {
+    expect(bloco('model', 'WebhookRecebido')).toMatch(/@@unique\(\[providerEventId, tipo\]\)/);
+    expect(migrations).toContain('CREATE TABLE "webhook_recebido"');
+    expect(migrations).toContain(
+      'CREATE UNIQUE INDEX "webhook_recebido_provider_event_id_tipo_key" ON "webhook_recebido"("provider_event_id", "tipo")'
+    );
   });
 
   it('status do pagamento é enum Prisma com os cinco estados', () => {

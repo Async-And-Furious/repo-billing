@@ -1,13 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { EstimateStatus, Prisma } from '@prisma/client';
+import { EstimateStatus } from '@prisma/client';
 import { PrismaService } from '../../../../shared/infrastructure/database/prisma.service';
 import { OrcamentoMapper, PagamentoMapper } from '../persistence/financeiro.mapper';
+import { violouUnicidade } from '../persistence/prisma-errors';
 import type { Orcamento } from '../../domain/entities/orcamento.entity';
 import type { Pagamento } from '../../domain/entities/pagamento.entity';
 import type { IOrcamentoRepository } from '../../domain/interfaces/financeiro.interfaces';
-
-const violouUnicidade = (error: unknown): boolean =>
-  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 
 @Injectable()
 export class OrcamentoRepository implements IOrcamentoRepository {

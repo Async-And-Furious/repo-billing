@@ -48,6 +48,9 @@ export class PagamentoMapper {
       status: record.status as StatusPagamento,
       preferenceId: record.preferenceId,
       linkPagamento: record.linkPagamento,
+      pagamentoExternoId: record.mercadoPagoPaymentId,
+      criadoEm: record.createdAt,
+      atualizadoEm: record.updatedAt,
     });
   }
 
@@ -59,6 +62,9 @@ export class PagamentoMapper {
       status: pagamento.getStatus(),
       preferenceId: pagamento.getPreferenceId(),
       linkPagamento: pagamento.getLinkPagamento(),
+      mercadoPagoPaymentId: pagamento.getPagamentoExternoId(),
+      createdAt: pagamento.getCriadoEm(),
+      updatedAt: pagamento.getAtualizadoEm(),
     };
   }
 }
