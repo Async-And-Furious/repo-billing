@@ -27,7 +27,9 @@ erro() {
 mascarar() {
   local linha
   while IFS= read -r linha; do
-    [[ -n "$linha" ]] && printf '::add-mask::%s\n' "$linha"
+    if [[ -n "$linha" ]]; then
+      printf '::add-mask::%s\n' "$linha"
+    fi
   done <<<"$1"
 }
 
@@ -121,6 +123,7 @@ segredos() {
   rds=$(aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "$RDS_SECRET_ARN" --query SecretString --output text)
   usuario=$(jq -er '.username' <<<"$rds")
   senha=$(jq -er '.password' <<<"$rds")
+  [[ -n "$senha" ]] || erro "senha do banco vazia no secret do RDS"
   mascarar "$usuario"
   mascarar "$senha"
   url="postgresql://$(jq -rn --arg v "$usuario" '$v|@uri'):$(jq -rn --arg v "$senha" '$v|@uri')@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=${DB_SSLMODE}&connection_limit=3"
@@ -128,6 +131,7 @@ segredos() {
 
   kafka=$(aws secretsmanager get-secret-value --region "$AWS_REGION" --secret-id "tc3/kafka/${DEPLOY_ENV}" --query SecretString --output text)
   kafka_senha=$(jq -er '.password' <<<"$kafka")
+  [[ -n "$kafka_senha" ]] || erro "senha do Kafka vazia no secret tc3/kafka/${DEPLOY_ENV}"
   mascarar "$kafka_senha"
 
   jwt=$(aws ssm get-parameter --region "$AWS_REGION" --name "$JWT_PUBLIC_KEY_PARAMETER_NAME" --with-decryption --query 'Parameter.Value' --output text)

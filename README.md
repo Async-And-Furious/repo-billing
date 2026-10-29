@@ -93,7 +93,7 @@ pnpm start
 
 A aprovação de orçamento chama o Mercado Pago: configure `MP_ACCESS_TOKEN` (credencial de teste) e, se quiser receber o webhook, `MP_NOTIFICATION_URL`. No Kubernetes, `MP_ACCESS_TOKEN` fica no `billing-secret` e `MP_NOTIFICATION_URL` no `billing-config`.
 
-Qualidade: `pnpm lint`, `pnpm type:check`, `pnpm test:cov` (gate de 80/80/80/80 no `jest.config.js`, igual ao OS Service) e `pnpm build`. O job `tests` da esteira roda o mesmo conjunto, com o lint sem `--fix`.
+Qualidade: `pnpm exec eslint "{src,test}/**/*.ts"` (sem `--fix`; `pnpm lint` corrige arquivos), `pnpm type:check`, `pnpm test:cov` (gate de 80/80/80/80 no `jest.config.js`, igual ao OS Service) e `pnpm build`. O job `tests` da esteira roda o mesmo conjunto.
 
 ## Esteira de CI/CD (#327)
 
@@ -109,6 +109,8 @@ Roda em PR e em push para `main`. Os três jobs são os checks de proteção de 
 > 1. **Este PR:** o `validate` de transição roda no próprio PR e o libera enquanto a proteção ainda o exige. Não é preciso mexer na proteção para este merge.
 > 2. **Depois do merge** (Settings > Branches, regra da `main`): trocar os required checks de `validate` para `tests`, `sonar` e `trivy`. Antes disso, o `SONAR_TOKEN` e o projeto `Async-And-Furious_repo-billing` no SonarCloud precisam existir, senão o `sonar` falha em todo PR e a `main` trava.
 > 3. **PR seguinte:** remover o job `validate` de `ci.yml`.
+>
+> Antes do merge, o environment `hml` precisa ter os secrets e variáveis da seção abaixo, e `SONAR_TOKEN` precisa existir. O push em `main` dispara `deploy-eks.yml` e o `sonar`: sem eles, os runs falham depois do merge (o `infra.sh` aborta, por exemplo com `MP_ACCESS_TOKEN ausente`), e o HML fica sem a versão.
 
 | Check | O que faz | Bloqueia? |
 |---|---|---|
@@ -117,7 +119,7 @@ Roda em PR e em push para `main`. Os três jobs são os checks de proteção de 
 | `trivy` | Build da imagem e scan de HIGH/CRITICAL (tabela e SARIF) | O relatório sempre sai. O gate final é informativo, igual ao template do monólito (ver pendências) |
 | `validate` (transição) | Falha se `tests` não terminou com `success`. Usa `if: always()` para que um `tests` falho não vire check pulado (pulado conta como aprovado) | Só enquanto a proteção ainda o exigir; depois sai do `ci.yml` |
 
-O job `sonar` não roda em PR de fork, porque o fork não recebe o `SONAR_TOKEN`. O check fica ignorado, não verde falso.
+O job `sonar` não roda em PR de fork, porque o fork não recebe o `SONAR_TOKEN`. Como check obrigatório, o job pulado conta como aprovado: nesse caso o Quality Gate não bloqueia. Se o grupo quiser outra regra, é decisão dele.
 
 ### `deploy-eks.yml`: deploy HML isolado
 
@@ -128,17 +130,17 @@ Dispara em push para `main` que altere `src/`, `prisma/`, `k8s/`, `scripts/deplo
    - resolve cluster, target group do Billing e banco (`scripts/deploy/infra.sh infra`), pelos states do `repo-k8s-infra` e do `repo-db-infra`;
    - lê os segredos de runtime (`scripts/deploy/infra.sh segredos`): senha do banco no secret `tc3-db-billing-hml`, senha do Kafka em `tc3/kafka/hml` e chave pública JWT no SSM;
    - libera temporariamente o IP do runner no endpoint do EKS (o endpoint é privado) e devolve a configuração original num step `if: always()`;
-   - verifica se o cluster está `ACTIVE` e se o namespace `billing` existe. O namespace não é criado aqui: é do `repo-k8s-infra` (ADR-0020);
+   - verifica se o cluster está `ACTIVE` e se o namespace `billing` existe. O namespace não é criado aqui: é do `repo-k8s-infra` (ADR-0020 deste repositório de infra, não a do monólito);
    - renderiza `k8s/` e aplica ConfigMap e Secret;
    - **migration antes do rollout**: apaga o `billing-migrate` anterior, aplica o Job (`prisma migrate deploy`) e espera completar;
    - seed de demonstração só se `seed_hml` estiver marcado no disparo manual (idempotente, `DEPLOY_ENV=hml`);
    - aplica Deployment, Service, TargetGroupBinding e HPA e espera o `rollout status`.
 
-### Placeholders e renderização (ADR-0015)
+### Placeholders e renderização
 
-`k8s/` guarda placeholders `${nome}`, sem valor real no Git. `scripts/deploy/render-k8s.mjs` preenche cada `${nome}` com a variável de ambiente `NOME` (em maiúscula), como string JSON, que é YAML válido, então PEM e senhas com caracteres especiais não quebram o arquivo. Se o manifesto referencia uma variável vazia ou ausente, o deploy para antes de aplicar qualquer coisa.
+`k8s/` guarda placeholders `${nome}`, sem valor real no Git. `scripts/deploy/render-k8s.mjs` preenche cada `${nome}` com a variável de ambiente `NOME` (em maiúscula), como string JSON, que é YAML válido, então PEM e senhas com caracteres especiais não quebram o arquivo. Se o manifesto referencia uma variável vazia ou ausente, o deploy para antes de aplicar qualquer coisa. O padrão de placeholders segue a ADR-0015 (`templatefile()` no Terraform); o renderizador é deste repositório.
 
-Isso faz o mesmo pipeline funcionar antes e depois do merge do repo-billing#1 (#325): o `secret.yaml` de hoje não referencia `${mp_webhook_secret}`, então `MP_WEBHOOK_SECRET` não é exigida; depois do merge, é, e o deploy falha com a lista do que falta. `MP_PREFERENCE_EXPIRACAO_HORAS` entra no PR #1 como literal `'48'` no configmap, não como placeholder, então o pipeline não a preenche.
+O `secret.yaml` passa a referenciar `${mp_webhook_secret}` com o merge do repo-billing#1 (#325); antes dele, `MP_WEBHOOK_SECRET` não é exigida. Depois dele, a variável é obrigatória e o deploy para com a lista do que falta. `MP_PREFERENCE_EXPIRACAO_HORAS` é literal `'48'` no configmap (#325), não placeholder, então o pipeline não a preenche.
 
 O `replicas` do Deployment é literal (`2`), e não placeholder, porque o renderer põe valores entre aspas e o campo precisa ser inteiro.
 
@@ -149,7 +151,7 @@ Cadastre tudo no environment `hml` (Settings > Environments), e não no reposit�
 | Nome | Tipo | Origem | Usado em |
 |---|---|---|---|
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | secret | credencial IAM de deploy do grupo (não pessoal) | `image`, `deploy-hml` |
-| `MP_ACCESS_TOKEN` | secret | painel do Mercado Pago, aba **Teste** (ADR-0022) | `billing-secret` |
+| `MP_ACCESS_TOKEN` | secret | painel do Mercado Pago, aba **Teste** (ADR-0022, ainda em Proposta) | `billing-secret` |
 | `MP_WEBHOOK_SECRET` | secret | chave de assinatura dos webhooks do Mercado Pago. Precisa ser a que assina as notificações **reais** (ver `.env.example`) | `billing-secret`, a partir do merge do #325 |
 | `JWT_PUBLIC_KEY_PARAMETER_NAME` | variável | nome do parâmetro SSM com a chave pública RS256 (a mesma usada pelo monólito) | `billing-secret` |
 | `MP_NOTIFICATION_URL` | variável | URL pública do webhook pelo Gateway: `https://<gateway>/api/v1/webhooks/mercado-pago` | `billing-config` (obrigatória) |
@@ -202,13 +204,13 @@ Manifestos em `k8s/`, aplicados pelo pipeline (exceto onde indicado):
 
 O namespace `billing` e o ECR `tc3-billing-hml` são criados pelo `repo-k8s-infra`. Não há manifesto de namespace neste repositório.
 
-## Pendências
+## Pendências da esteira (#327)
 
 **Neste repositório (esta issue):**
 
 - Proteção da `main` no GitHub: PR obrigatório, uma aprovação, e os checks `tests`, `sonar` e `trivy`. Passos e ordem na seção "Esteira" (atenção sobre o `validate` de transição). Em `develop`, a regra da issue não se aplica: este repositório só tem `main`.
 - Projeto `Async-And-Furious_repo-billing` no SonarCloud (organização `async-and-furious`), com o `SONAR_TOKEN` cadastrado. A chave do projeto está em `sonar-project.properties`.
-- Trivy: o gate final de HIGH/CRITICAL está informativo, igual ao monólito. Para bloquear, basta remover `continue-on-error` do último step. Decisão do grupo.
+- Trivy: o gate final de HIGH/CRITICAL está informativo, igual ao monólito. Para bloquear, basta remover `continue-on-error` do último step. Decisão do grupo; a ADR-0013 do `async-furious-project` registra esse risco.
 - Prova do gate de 80% no GitHub (seção acima) e print do Quality Gate no SonarCloud.
 - Deploy real em HML: não foi executado (sem acesso a AWS nem kubectl neste ambiente).
 - Evidência de cobertura para o critério da issue: link do run verde do job `tests` na `main` (ou print do Sonar) colado aqui depois do primeiro run.
@@ -219,6 +221,15 @@ O namespace `billing` e o ECR `tc3-billing-hml` são criados pelo `repo-k8s-infr
 - `repo-k8s-infra` (develop já tem ECR `tc3-billing-*`, namespace `billing`, target group e regras de path do Billing, e Kafka em `kafka.kafka.svc.cluster.local:9092`): confirmar que o `up.yml` foi aplicado em HML e que o state tem `service_target_group_arns.billing` e `ecr_repository_names.billing`.
 - `repo-db-infra` (develop já tem `db_billing_secret_arn` e `db_billing_name`): confirmar a aplicação em HML. O banco `billing` e a role `billing_app` são criados pelo bootstrap do monólito, que precisa rodar depois do deploy do OS Service.
 - `async-furious-project` (#317): rota do Billing no API Gateway. `POST /api/v1/webhooks/mercado-pago` precisa ficar **sem** authorizer. Sem ela, `MP_NOTIFICATION_URL` não chega ao serviço.
-- `repo-billing` PR #1 (#325): ainda não mergeado. Quando mergear, a variável `MP_WEBHOOK_SECRET` passa a ser obrigatória no environment `hml`.
+- `repo-billing` PR #1 (#325): entra antes deste PR. A partir dele, `MP_WEBHOOK_SECRET` é obrigatória no environment `hml`; sem ela, o `render-k8s.mjs` para o deploy antes de aplicar qualquer manifesto.
 - SonarCloud: criação do projeto e do token (ver acima).
 
+## Pendências conhecidas
+
+- Migration e seed da #324 ainda não foram aplicados em HML: dependem do banco `billing` (abaixo) e do pipeline de deploy (#327).
+- Publicação e consumo de eventos no Kafka (`OrcamentoCalculado` → `GerarOrcamentoHandler`, `OrcamentoGerado`/`OrcamentoAprovado`/`OrcamentoRecusado` em `billing.eventos.v1`) entram na #326.
+- Webhook do Mercado Pago e confirmação/recusa do pagamento entram na #325; a criação da preference na aprovação já está aqui.
+
+- Banco `billing`/role `billing_app` e o teste de acesso cruzado só podem ser validados em HML, após o `repo-db-infra` PR #31 e o Job de bootstrap.
+- Divergência do template, herdada do `repo-execucao-service`: o `jwt.config.ts` foi reduzido a verificação (sem assinatura).
+- O workflow de CI não é cópia do OS Service: o template da #333 ainda não foi publicado.

@@ -57,7 +57,7 @@ jobs:
   sonar:
     name: sonar
     needs: tests
-    # Fork não recebe o SONAR_TOKEN: o check fica ignorado, não falso verde.
+    # Fork não recebe o SONAR_TOKEN: o job é pulado, e pulado conta como aprovado na proteção (README, "Esteira").
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     steps:
@@ -140,7 +140,7 @@ jobs:
             trivy-results.sarif
           retention-days: 30
 
-      - name: Gate HIGH e CRITICAL
+      - name: Relatório HIGH e CRITICAL (informativo)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         # Mesmo comportamento do template do monólito (informativo até decisão do grupo).
         continue-on-error: true
