@@ -51,14 +51,32 @@ model Orcamento {
 
 // ordemServicoId unico: uma cobranca por OS.
 model Pagamento {
-  id             String          @id @default(uuid())
-  ordemServicoId String          @unique @map("ordem_servico_id")
-  valor          Decimal         @db.Decimal(10, 2)
-  status         StatusPagamento @default(AGUARDANDO_PAGAMENTO)
-  preferenceId   String?         @map("preference_id")
-  linkPagamento  String?         @map("link_pagamento")
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
+  id                   String          @id @default(uuid())
+  ordemServicoId       String          @unique @map("ordem_servico_id")
+  valor                Decimal         @db.Decimal(10, 2)
+  status               StatusPagamento @default(AGUARDANDO_PAGAMENTO)
+  preferenceId         String?         @map("preference_id")
+  linkPagamento        String?         @map("link_pagamento")
+  // Id do pagamento no Mercado Pago (so apos o webhook); unico: um pagamento externo, um Pagamento.
+  mercadoPagoPaymentId String?         @unique @map("mercado_pago_payment_id")
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
 
   @@map("pagamentos")
+}
+
+// Idempotencia de entrada do webhook: providerEventId (id do pagamento no Mercado Pago) + tipo
+// (payment.{status}). Gravada na mesma transacao que atualiza o Pagamento; reentrega viola o unique.
+// ordemServicoId e resultado (desfecho do ResultadoNotificacao) sao nulos nas linhas anteriores a
+// essas colunas e nas notificacoes que nao gravam linha.
+model WebhookRecebido {
+  id              String   @id @default(uuid())
+  providerEventId String   @map("provider_event_id")
+  tipo            String
+  ordemServicoId  String?  @map("ordem_servico_id")
+  resultado       String?
+  recebidoEm      DateTime @default(now()) @map("recebido_em")
+
+  @@unique([providerEventId, tipo])
+  @@map("webhook_recebido")
 }

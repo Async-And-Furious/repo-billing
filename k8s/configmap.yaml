@@ -13,3 +13,5 @@ data:
   KAFKA_BROKERS: ${kafka_brokers}
   KAFKA_CONSUMER_GROUP: billing-service
   MP_NOTIFICATION_URL: ${mp_notification_url}
+  # Mesmo prazo do detector de OS parada do OS Service (padrao 48 h; na demo, minutos).
+  MP_PREFERENCE_EXPIRACAO_HORAS: '48'

@@ -23,8 +23,15 @@ export const pinoHttpOptions: Options = {
     if (response.statusCode >= 400) return 'warn';
     return 'info';
   },
+  // x-signature e x-request-id são a prova de autenticidade do webhook do Mercado Pago (replay).
   redact: {
-    paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
+    paths: [
+      'req.headers.authorization',
+      'req.headers.cookie',
+      'req.headers["x-signature"]',
+      'req.headers["x-request-id"]',
+      'res.headers["set-cookie"]',
+    ],
     censor: '[REDACTED]',
   },
 };

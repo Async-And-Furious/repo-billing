@@ -1,4 +1,5 @@
 import { IncomingMessage } from 'node:http';
+import pino from 'pino';
 import { logContext, pinoHttpOptions, resolveCorrelationId } from './pino-logger.config';
 
 describe('pino-logger.config', () => {
@@ -32,6 +33,30 @@ describe('pinoHttpOptions', () => {
 
   it('customProps expoe correlationId', () => {
     expect(pinoHttpOptions.customProps?.(req, {} as never)).toEqual({ correlationId: 'corr-9' });
+  });
+
+  it('redige x-signature e x-request-id do Mercado Pago na linha de log da requisição', () => {
+    const linhas: string[] = [];
+    const log = pino(
+      { redact: pinoHttpOptions.redact },
+      { write: (linha: string) => linhas.push(linha) }
+    );
+
+    log.info({
+      req: {
+        headers: {
+          'x-signature': 'ts=1700000000,v1=abcdef',
+          'x-request-id': 'req-do-mercado-pago',
+          'x-correlation-id': 'corr-9',
+        },
+      },
+    });
+
+    const saida = linhas.join('');
+    expect(saida).not.toContain('abcdef');
+    expect(saida).not.toContain('req-do-mercado-pago');
+    expect(saida).toContain('corr-9');
+    expect(saida).toContain('[REDACTED]');
   });
 
   it('customLogLevel varia com o status', () => {

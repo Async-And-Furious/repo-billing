@@ -48,7 +48,7 @@
     },
     "/api/v1/orcamentos/{ordemServicoId}/aprovar": {
       "patch": {
-        "description": "Rota pública (ADR-0011): não identifica o cliente, qualquer pessoa com o id da OS pode chamá-la. Risco aberto, registrado na ADR-0011. Cria a cobrança no Mercado Pago e devolve o link de pagamento; aprovar de novo devolve o mesmo link.",
+        "description": "Rota pública (ADR-0011): não identifica o cliente, qualquer pessoa com o id da OS pode chamá-la. Risco aberto, registrado na ADR-0011. Reserva a aprovação e só então cria a cobrança no Mercado Pago (uma única preference por OS); devolve o link de pagamento, e aprovar de novo devolve o mesmo link.",
         "operationId": "OrcamentoController_aprovar",
         "parameters": [
           {
@@ -77,8 +77,11 @@
           "404": {
             "description": "Orçamento não encontrado para a OS"
           },
+          "409": {
+            "description": "Outra aprovação da mesma OS está gerando a cobrança, ou o orçamento já foi aprovado sem link ainda gravado: tentar de novo depois."
+          },
           "502": {
-            "description": "Falha no Mercado Pago; o orçamento continua PENDING"
+            "description": "Falha no Mercado Pago; a reserva é desfeita e o orçamento volta a PENDING"
           }
         },
         "summary": "Aprovar orçamento (pública, ADR-0011)",
@@ -125,16 +128,106 @@
         ]
       }
     },
-    "/api/v1/webhooks/mercado-pago": {
-      "post": {
-        "operationId": "MercadoPagoWebhookController_receber",
-        "parameters": [],
+    "/api/v1/pagamentos/{ordemServicoId}": {
+      "get": {
+        "operationId": "PagamentoController_consultar",
+        "parameters": [
+          {
+            "name": "ordemServicoId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
-          "501": {
-            "description": "Ainda nao implementado (Feature #325)"
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagamentoResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente ou inválido"
+          },
+          "403": {
+            "description": "Permissões insuficientes"
+          },
+          "404": {
+            "description": "Pagamento não encontrado para a OS"
           }
         },
-        "summary": "Receber notificacao do Mercado Pago (publica, autenticada por assinatura)",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Consultar o status do pagamento da OS",
+        "tags": [
+          "Pagamentos"
+        ]
+      }
+    },
+    "/api/v1/webhooks/mercado-pago": {
+      "post": {
+        "description": "Valida x-signature/x-request-id (HMAC) e reconsulta o pagamento no Mercado Pago; o status nunca vem do corpo da notificação.",
+        "operationId": "MercadoPagoWebhookController_receber",
+        "parameters": [
+          {
+            "name": "data.id",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "type",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Id da requisição enviado pelo Mercado Pago, usado no manifesto da assinatura. Obrigatório junto com x-signature.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-signature",
+            "in": "header",
+            "description": "Assinatura HMAC-SHA256 do Mercado Pago (`ts=...,v1=...`). Obrigatória em toda notificação; ausente ou inválida devolve 401.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notificação assinada e recebida (inclusive reentrega ou ignorada, como merchant_order e type=payment sem data.id)."
+          },
+          "401": {
+            "description": "Assinatura ausente ou inválida."
+          },
+          "409": {
+            "description": "O Pagamento mudou de estado durante o processamento (o Mercado Pago reenvia)."
+          },
+          "502": {
+            "description": "Falha ao reconsultar ou estornar no Mercado Pago (o Mercado Pago reenvia)."
+          }
+        },
+        "summary": "Receber notificação do Mercado Pago (pública, autenticada por assinatura)",
         "tags": [
           "Webhooks"
         ]
@@ -262,6 +355,66 @@
         },
         "required": [
           "linkPagamento"
+        ]
+      },
+      "PagamentoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "9b2d7c1e-4f3a-4e8b-a1c2-3d4e5f6a7b8c"
+          },
+          "ordemServicoId": {
+            "type": "string",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "valor": {
+            "type": "number",
+            "example": 770.5
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "AGUARDANDO_PAGAMENTO",
+              "CONFIRMADO",
+              "RECUSADO",
+              "CANCELADO",
+              "ESTORNADO"
+            ],
+            "example": "AGUARDANDO_PAGAMENTO"
+          },
+          "linkPagamento": {
+            "type": "string",
+            "nullable": true,
+            "example": "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=123456789-abc",
+            "description": "init_point da preference do Checkout Pro; nulo quando o Pagamento já não aguarda pagamento (o link deixa de ser devolvido)."
+          },
+          "pagamentoExternoId": {
+            "type": "string",
+            "nullable": true,
+            "example": "184177738229",
+            "description": "Id do pagamento no Mercado Pago que confirmou ou recusou a cobrança; nulo enquanto aguarda"
+          },
+          "criadoEm": {
+            "format": "date-time",
+            "type": "string",
+            "example": "2026-10-27T10:00:00.000Z"
+          },
+          "atualizadoEm": {
+            "format": "date-time",
+            "type": "string",
+            "example": "2026-10-27T11:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "ordemServicoId",
+          "valor",
+          "status",
+          "linkPagamento",
+          "pagamentoExternoId",
+          "criadoEm",
+          "atualizadoEm"
         ]
       },
       "HealthResponseDto": {
