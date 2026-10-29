@@ -43,14 +43,19 @@ export class OrcamentoController {
   @Patch(':ordemServicoId/aprovar')
   @ApiOperation({
     summary: 'Aprovar orçamento (pública, ADR-0011)',
-    description: `${RISCO_ADR_0011} Cria a cobrança no Mercado Pago e devolve o link de pagamento; aprovar de novo devolve o mesmo link.`,
+    description: `${RISCO_ADR_0011} Reserva a aprovação e só então cria a cobrança no Mercado Pago (uma única preference por OS); devolve o link de pagamento, e aprovar de novo devolve o mesmo link.`,
   })
   @ApiResponse({ status: 200, type: AprovacaoOrcamentoResponseDto })
   @ApiResponse({ status: 400, description: 'Orçamento recusado ou sem valores definidos' })
   @ApiResponse({ status: 404, description: 'Orçamento não encontrado para a OS' })
   @ApiResponse({
+    status: 409,
+    description:
+      'Outra aprovação da mesma OS está gerando a cobrança, ou o orçamento já foi aprovado sem link ainda gravado: tentar de novo depois.',
+  })
+  @ApiResponse({
     status: 502,
-    description: 'Falha no Mercado Pago; o orçamento continua PENDING',
+    description: 'Falha no Mercado Pago; a reserva é desfeita e o orçamento volta a PENDING',
   })
   aprovar(
     @Param('ordemServicoId', ParseUUIDPipe) ordemServicoId: string

@@ -10,13 +10,14 @@ import { HealthModule } from './modules/health/health.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 import { GlobalExceptionFilter } from './shared/infrastructure/filters/global-exception.filter';
+import { THROTTLER_GLOBAL } from './shared/infrastructure/throttling/throttler.config';
 import { pinoHttpOptions } from './shared/infrastructure/logging/pino-logger.config';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     LoggerModule.forRoot({ pinoHttp: pinoHttpOptions }),
-    ThrottlerModule.forRoot([{ name: 'short', ttl: 60000, limit: 100 }]),
+    ThrottlerModule.forRoot([{ name: THROTTLER_GLOBAL, ttl: 60000, limit: 100 }]),
     DatabaseModule,
     AuthModule,
     FinanceiroModule,

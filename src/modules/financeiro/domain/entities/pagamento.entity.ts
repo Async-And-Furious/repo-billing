@@ -21,6 +21,10 @@ interface PagamentoProps {
   status: StatusPagamento;
   preferenceId: string | null;
   linkPagamento: string | null;
+  // Id do pagamento no Mercado Pago, gravado quando o webhook o confirma ou recusa (único).
+  pagamentoExternoId: string | null;
+  criadoEm: Date;
+  atualizadoEm: Date;
 }
 
 // AGUARDANDO_PAGAMENTO → CONFIRMADO | RECUSADO | CANCELADO; CONFIRMADO → ESTORNADO.
@@ -28,18 +32,23 @@ interface PagamentoProps {
 export class Pagamento {
   private constructor(private props: PagamentoProps) {}
 
-  // Nasce na aprovação do orçamento, já com a preference do Mercado Pago criada.
-  static criar(ordemServicoId: string, valor: number, cobranca: Cobranca): Pagamento {
+  // Reserva na aprovação do orçamento, antes da preference: só o vencedor da reserva cria a cobrança
+  // no Mercado Pago. Nasce sem preferenceId nem linkPagamento, que entram em vincularCobranca.
+  static reservar(ordemServicoId: string, valor: number): Pagamento {
     if (!(valor > 0)) {
       throw new DomainException('Valor do pagamento deve ser positivo.');
     }
+    const agora = new Date();
     return new Pagamento({
       id: crypto.randomUUID(),
       ordemServicoId,
       valor,
       status: StatusPagamento.AGUARDANDO_PAGAMENTO,
-      preferenceId: cobranca.preferenceId,
-      linkPagamento: cobranca.linkPagamento,
+      preferenceId: null,
+      linkPagamento: null,
+      pagamentoExternoId: null,
+      criadoEm: agora,
+      atualizadoEm: agora,
     });
   }
 
@@ -47,12 +56,22 @@ export class Pagamento {
     return new Pagamento({ ...props });
   }
 
-  confirmar(): void {
-    this.transicionar(StatusPagamento.AGUARDANDO_PAGAMENTO, StatusPagamento.CONFIRMADO);
+  vincularCobranca(cobranca: Cobranca): void {
+    if (this.props.linkPagamento !== null) {
+      throw new DomainException('Pagamento já tem cobrança no Mercado Pago.');
+    }
+    this.props.preferenceId = cobranca.preferenceId;
+    this.props.linkPagamento = cobranca.linkPagamento;
   }
 
-  recusar(): void {
+  confirmar(pagamentoExternoId: string): void {
+    this.transicionar(StatusPagamento.AGUARDANDO_PAGAMENTO, StatusPagamento.CONFIRMADO);
+    this.props.pagamentoExternoId = pagamentoExternoId;
+  }
+
+  recusar(pagamentoExternoId: string): void {
     this.transicionar(StatusPagamento.AGUARDANDO_PAGAMENTO, StatusPagamento.RECUSADO);
+    this.props.pagamentoExternoId = pagamentoExternoId;
   }
 
   // Saga falhou antes do pagamento.
@@ -86,6 +105,15 @@ export class Pagamento {
   }
   getLinkPagamento(): string | null {
     return this.props.linkPagamento;
+  }
+  getPagamentoExternoId(): string | null {
+    return this.props.pagamentoExternoId;
+  }
+  getCriadoEm(): Date {
+    return this.props.criadoEm;
+  }
+  getAtualizadoEm(): Date {
+    return this.props.atualizadoEm;
   }
 
   private transicionar(de: StatusPagamento, para: StatusPagamento): void {

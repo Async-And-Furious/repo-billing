@@ -1,6 +1,6 @@
 import { ConflitoException } from '../../../../shared/domain/exceptions/conflito.exception';
 import { EntityNotFoundException } from '../../../../shared/domain/exceptions/entity-not-found.exception';
-import { Pagamento } from '../../domain/entities/pagamento.entity';
+import { Pagamento, type Cobranca } from '../../domain/entities/pagamento.entity';
 import { OrcamentoAprovado } from '../../domain/events/orcamento.events';
 import type {
   IGatewayPagamento,
@@ -32,18 +32,27 @@ export class AprovarOrcamentoUseCase {
       return this.linkExistente(ordemServicoId);
     }
 
-    // Valida antes de falar com o Mercado Pago (REJECTED ou sem valor é erro de domínio).
+    // Valida antes de reservar (REJECTED ou sem valor é erro de domínio).
     orcamento.aprovar();
-
-    // Falha do Mercado Pago sobe como 502 e nada é gravado: o orçamento segue PENDING.
     const valor = orcamento.getValorTotalGeral();
-    const cobranca = await this.gateway.criarCobranca(ordemServicoId, valor);
-    const pagamento = Pagamento.criar(ordemServicoId, valor, cobranca);
 
+    // Reserva antes de falar com o Mercado Pago: o insert/update condicional tem um único vencedor,
+    // e só ele cria a preference. Quem perde não chama o gateway e devolve o link (se já gravado) ou 409.
+    const pagamento = Pagamento.reservar(ordemServicoId, valor);
     if (!(await this.orcamentoRepository.aprovarComPagamento(orcamento, pagamento))) {
-      // Aprovação concorrente venceu; a preference criada aqui fica sem uso e não cobra nada.
       return this.linkExistente(ordemServicoId);
     }
+
+    // Falha do Mercado Pago sobe como 502 e a reserva é desfeita: o orçamento volta a PENDING.
+    let cobranca: Cobranca;
+    try {
+      cobranca = await this.gateway.criarCobranca(ordemServicoId, valor);
+    } catch (error) {
+      await this.orcamentoRepository.desfazerAprovacao(orcamento, pagamento);
+      throw error;
+    }
+    pagamento.vincularCobranca(cobranca);
+    await this.pagamentoRepository.salvarCobranca(pagamento);
 
     await this.publicador.publicar(
       new OrcamentoAprovado(ordemServicoId, orcamento.getId(), orcamento.getValorTotalPecas())
@@ -56,7 +65,7 @@ export class AprovarOrcamentoUseCase {
     const linkPagamento = pagamento?.getLinkPagamento();
     if (!linkPagamento) {
       throw new ConflitoException(
-        `O orçamento da OS ${ordemServicoId} já foi aprovado, mas a cobrança não foi encontrada.`
+        `O orçamento da OS ${ordemServicoId} já foi aprovado e o link de pagamento ainda não está disponível. Tente novamente em instantes.`
       );
     }
     return { linkPagamento };
