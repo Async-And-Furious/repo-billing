@@ -30,6 +30,7 @@ describe('Recusa e consulta de orçamento', () => {
       criar: jest.fn(),
       atualizarTotaisSePendente: jest.fn(),
       aprovarComPagamento: jest.fn(),
+      desfazerAprovacao: jest.fn(),
       recusarSePendente: jest.fn().mockResolvedValue(true),
     };
     publicador = { publicar: jest.fn().mockResolvedValue(undefined) };

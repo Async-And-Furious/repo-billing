@@ -11,6 +11,7 @@ describe('ConsultarPagamentoUseCase', () => {
   beforeEach(() => {
     repository = {
       findByOrdemServicoId: jest.fn(),
+      salvarCobranca: jest.fn(),
       salvarComNotificacao: jest.fn(),
       jaRecebida: jest.fn(),
       registrar: jest.fn(),

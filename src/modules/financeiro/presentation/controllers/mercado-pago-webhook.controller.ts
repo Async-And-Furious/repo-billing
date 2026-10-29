@@ -48,7 +48,7 @@ export class MercadoPagoWebhookController {
     name: 'x-signature',
     required: false,
     description:
-      'Assinatura HMAC-SHA256 do Mercado Pago (`ts=...,v1=...`). Obrigatória quando type=payment com data.id; ausente ou inválida devolve 401.',
+      'Assinatura HMAC-SHA256 do Mercado Pago (`ts=...,v1=...`). Obrigatória em toda notificação; ausente ou inválida devolve 401.',
   })
   @ApiHeader({
     name: 'x-request-id',
@@ -58,7 +58,8 @@ export class MercadoPagoWebhookController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Notificação recebida (inclusive reentrega ou ignorada).',
+    description:
+      'Notificação assinada e recebida (inclusive reentrega ou ignorada, como merchant_order e type=payment sem data.id).',
   })
   @ApiResponse({ status: 401, description: 'Assinatura ausente ou inválida.' })
   @ApiResponse({
@@ -70,7 +71,7 @@ export class MercadoPagoWebhookController {
     description: 'Falha ao reconsultar ou estornar no Mercado Pago (o Mercado Pago reenvia).',
   })
   async receber(@Query('data.id') dataId?: string, @Query('type') tipo?: string): Promise<void> {
-    // Sem validação de assinatura: o type vem da internet, então não entra no log (só texto fixo).
+    // Notificação assinada que não altera estado: 200 sem efeito, para o Mercado Pago não reenviar.
     if (tipo !== 'payment' || !dataId) {
       this.logger.debug('Notificação do Mercado Pago ignorada (não é type=payment com data.id).');
       return;

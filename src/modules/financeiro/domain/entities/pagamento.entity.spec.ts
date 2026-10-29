@@ -18,22 +18,35 @@ describe('Pagamento', () => {
       atualizadoEm: new Date('2026-10-27T10:00:00Z'),
     });
 
-  it('nasce AGUARDANDO_PAGAMENTO com a cobrança vinculada', () => {
-    const pagamento = Pagamento.criar(ordemServicoId, 770.5, cobranca);
+  it('nasce AGUARDANDO_PAGAMENTO sem cobrança (reserva antes do Mercado Pago)', () => {
+    const pagamento = Pagamento.reservar(ordemServicoId, 770.5);
     expect(pagamento.getId()).toEqual(expect.any(String));
     expect(pagamento.getOrdemServicoId()).toBe(ordemServicoId);
     expect(pagamento.getValor()).toBe(770.5);
     expect(pagamento.getStatus()).toBe(StatusPagamento.AGUARDANDO_PAGAMENTO);
     expect(pagamento.estaPendente()).toBe(true);
-    expect(pagamento.getPreferenceId()).toBe('pref-1');
-    expect(pagamento.getLinkPagamento()).toBe('https://mp/pref-1');
+    expect(pagamento.getPreferenceId()).toBeNull();
+    expect(pagamento.getLinkPagamento()).toBeNull();
     expect(pagamento.getPagamentoExternoId()).toBeNull();
     expect(pagamento.getCriadoEm()).toBeInstanceOf(Date);
     expect(pagamento.getAtualizadoEm()).toEqual(pagamento.getCriadoEm());
   });
 
   it.each([0, -10, Number.NaN])('recusa valor %p', (valor) => {
-    expect(() => Pagamento.criar(ordemServicoId, valor, cobranca)).toThrow(DomainException);
+    expect(() => Pagamento.reservar(ordemServicoId, valor)).toThrow(DomainException);
+  });
+
+  it('vincula a cobrança da preference uma única vez', () => {
+    const pagamento = Pagamento.reservar(ordemServicoId, 770.5);
+    pagamento.vincularCobranca(cobranca);
+    expect(pagamento.getPreferenceId()).toBe('pref-1');
+    expect(pagamento.getLinkPagamento()).toBe('https://mp/pref-1');
+    expect(pagamento.getStatus()).toBe(StatusPagamento.AGUARDANDO_PAGAMENTO);
+
+    expect(() =>
+      pagamento.vincularCobranca({ preferenceId: 'pref-2', linkPagamento: 'outro' })
+    ).toThrow(DomainException);
+    expect(pagamento.getLinkPagamento()).toBe('https://mp/pref-1');
   });
 
   it('cancela a partir de AGUARDANDO_PAGAMENTO', () => {

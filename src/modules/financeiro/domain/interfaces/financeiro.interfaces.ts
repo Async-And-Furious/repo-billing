@@ -29,15 +29,21 @@ export interface IOrcamentoRepository {
   criar(orcamento: Orcamento): Promise<void>;
   // Grava os totais só se o orçamento continua PENDING; false se outra transição chegou antes.
   atualizarTotaisSePendente(orcamento: Orcamento): Promise<boolean>;
-  // Numa transação: Orcamento PENDING → APPROVED + insert do Pagamento. False se o orçamento
-  // já não estava PENDING ou se a OS já tem pagamento (constraint única em ordemServicoId).
+  // Reserva da aprovação, numa transação: Orcamento PENDING → APPROVED + insert do Pagamento (ainda sem
+  // cobrança). False se o orçamento já não estava PENDING ou se a OS já tem pagamento (constraint única
+  // em ordemServicoId): só uma aprovação concorrente ganha a reserva e chama o Mercado Pago.
   aprovarComPagamento(orcamento: Orcamento, pagamento: Pagamento): Promise<boolean>;
+  // Compensação quando o Mercado Pago falha depois da reserva: numa transação, remove o Pagamento sem
+  // cobrança e devolve o orçamento a PENDING. Nada fica gravado, como se a aprovação não tivesse ocorrido.
+  desfazerAprovacao(orcamento: Orcamento, pagamento: Pagamento): Promise<void>;
   // Transição atômica PENDING → REJECTED; false se outra transição chegou antes.
   recusarSePendente(orcamento: Orcamento): Promise<boolean>;
 }
 
 export interface IPagamentoRepository {
   findByOrdemServicoId(ordemServicoId: string): Promise<Pagamento | null>;
+  // Grava a cobrança (preference e link) de um Pagamento reservado. Só a aprovação que ganhou a reserva chega aqui.
+  salvarCobranca(pagamento: Pagamento): Promise<void>;
   // Numa única transação: grava webhook_recebido e persiste a transição do Pagamento (status e id
   // externo), condicionada a `statusAnterior`. False, sem efeito algum, se a notificação já foi
   // vista (unique em webhook_recebido ou no id externo) ou se o Pagamento já mudou de status.

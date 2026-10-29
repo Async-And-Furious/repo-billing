@@ -50,6 +50,17 @@ export class OrcamentoRepository implements IOrcamentoRepository {
     }
   }
 
+  // Só desfaz reserva sem cobrança: o linkPagamento nulo garante que nada já foi pago ou exibido.
+  async desfazerAprovacao(orcamento: Orcamento, pagamento: Pagamento): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.pagamento.deleteMany({ where: { id: pagamento.getId(), linkPagamento: null } });
+      await tx.orcamento.updateMany({
+        where: { id: orcamento.getId(), status: EstimateStatus.APPROVED },
+        data: { status: EstimateStatus.PENDING },
+      });
+    });
+  }
+
   async recusarSePendente(orcamento: Orcamento): Promise<boolean> {
     const { count } = await this.prisma.orcamento.updateMany({
       where: { id: orcamento.getId(), status: EstimateStatus.PENDING },

@@ -48,7 +48,7 @@
     },
     "/api/v1/orcamentos/{ordemServicoId}/aprovar": {
       "patch": {
-        "description": "Rota pública (ADR-0011): não identifica o cliente, qualquer pessoa com o id da OS pode chamá-la. Risco aberto, registrado na ADR-0011. Cria a cobrança no Mercado Pago e devolve o link de pagamento; aprovar de novo devolve o mesmo link.",
+        "description": "Rota pública (ADR-0011): não identifica o cliente, qualquer pessoa com o id da OS pode chamá-la. Risco aberto, registrado na ADR-0011. Reserva a aprovação e só então cria a cobrança no Mercado Pago (uma única preference por OS); devolve o link de pagamento, e aprovar de novo devolve o mesmo link.",
         "operationId": "OrcamentoController_aprovar",
         "parameters": [
           {
@@ -77,8 +77,11 @@
           "404": {
             "description": "Orçamento não encontrado para a OS"
           },
+          "409": {
+            "description": "Outra aprovação da mesma OS está gerando a cobrança, ou o orçamento já foi aprovado sem link ainda gravado: tentar de novo depois."
+          },
           "502": {
-            "description": "Falha no Mercado Pago; o orçamento continua PENDING"
+            "description": "Falha no Mercado Pago; a reserva é desfeita e o orçamento volta a PENDING"
           }
         },
         "summary": "Aprovar orçamento (pública, ADR-0011)",
@@ -203,7 +206,7 @@
           {
             "name": "x-signature",
             "in": "header",
-            "description": "Assinatura HMAC-SHA256 do Mercado Pago (`ts=...,v1=...`). Obrigatória quando type=payment com data.id; ausente ou inválida devolve 401.",
+            "description": "Assinatura HMAC-SHA256 do Mercado Pago (`ts=...,v1=...`). Obrigatória em toda notificação; ausente ou inválida devolve 401.",
             "required": false,
             "schema": {
               "type": "string"
@@ -212,7 +215,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Notificação recebida (inclusive reentrega ou ignorada)."
+            "description": "Notificação assinada e recebida (inclusive reentrega ou ignorada, como merchant_order e type=payment sem data.id)."
           },
           "401": {
             "description": "Assinatura ausente ou inválida."

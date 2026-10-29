@@ -20,6 +20,16 @@ export class PagamentoRepository implements IPagamentoRepository {
     return record ? PagamentoMapper.toDomain(record) : null;
   }
 
+  async salvarCobranca(pagamento: Pagamento): Promise<void> {
+    await this.prisma.pagamento.update({
+      where: { id: pagamento.getId() },
+      data: {
+        preferenceId: pagamento.getPreferenceId(),
+        linkPagamento: pagamento.getLinkPagamento(),
+      },
+    });
+  }
+
   async salvarComNotificacao(
     pagamento: Pagamento,
     statusAnterior: StatusPagamento,

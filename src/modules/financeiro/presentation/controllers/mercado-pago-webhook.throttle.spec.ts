@@ -52,7 +52,8 @@ describe('Webhook do Mercado Pago e o throttling global', () => {
 
   it('o webhook nunca recebe 429, mesmo bem acima do limite', async () => {
     for (let i = 0; i < limite * 3; i++) {
-      await request(server).post('/webhooks/mercado-pago?type=topic_merchant_order_wh').expect(200);
+      // Sem assinatura: 401, mas nunca 429. O 401 do guard só aparece se o throttler não barrou antes.
+      await request(server).post('/webhooks/mercado-pago?type=topic_merchant_order_wh').expect(401);
     }
   });
 });

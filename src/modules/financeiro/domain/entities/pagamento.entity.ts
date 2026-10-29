@@ -32,8 +32,9 @@ interface PagamentoProps {
 export class Pagamento {
   private constructor(private props: PagamentoProps) {}
 
-  // Nasce na aprovação do orçamento, já com a preference do Mercado Pago criada.
-  static criar(ordemServicoId: string, valor: number, cobranca: Cobranca): Pagamento {
+  // Reserva na aprovação do orçamento, antes da preference: só o vencedor da reserva cria a cobrança
+  // no Mercado Pago. Nasce sem preferenceId nem linkPagamento, que entram em vincularCobranca.
+  static reservar(ordemServicoId: string, valor: number): Pagamento {
     if (!(valor > 0)) {
       throw new DomainException('Valor do pagamento deve ser positivo.');
     }
@@ -43,8 +44,8 @@ export class Pagamento {
       ordemServicoId,
       valor,
       status: StatusPagamento.AGUARDANDO_PAGAMENTO,
-      preferenceId: cobranca.preferenceId,
-      linkPagamento: cobranca.linkPagamento,
+      preferenceId: null,
+      linkPagamento: null,
       pagamentoExternoId: null,
       criadoEm: agora,
       atualizadoEm: agora,
@@ -53,6 +54,14 @@ export class Pagamento {
 
   static reconstituir(props: PagamentoProps): Pagamento {
     return new Pagamento({ ...props });
+  }
+
+  vincularCobranca(cobranca: Cobranca): void {
+    if (this.props.linkPagamento !== null) {
+      throw new DomainException('Pagamento já tem cobrança no Mercado Pago.');
+    }
+    this.props.preferenceId = cobranca.preferenceId;
+    this.props.linkPagamento = cobranca.linkPagamento;
   }
 
   confirmar(pagamentoExternoId: string): void {

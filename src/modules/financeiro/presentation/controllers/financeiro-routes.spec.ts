@@ -48,10 +48,27 @@ describe('Rotas do Billing', () => {
       const orcamento = orcamentos.get(id);
       return Promise.resolve(orcamento ? copia(orcamento) : null);
     },
+    // Reserva condicional, como o insert do Postgres: só a primeira aprovação da OS ganha.
     aprovarComPagamento: (orcamento: Orcamento, pagamento: Pagamento) => {
+      if (pagamentos.has(orcamento.getOrdemServicoId())) {
+        return Promise.resolve(false);
+      }
       orcamentos.set(orcamento.getOrdemServicoId(), orcamento);
       pagamentos.set(pagamento.getOrdemServicoId(), pagamento);
       return Promise.resolve(true);
+    },
+    desfazerAprovacao: (orcamento: Orcamento) => {
+      const pendente = Orcamento.reconstituir({
+        id: orcamento.getId(),
+        ordemServicoId: orcamento.getOrdemServicoId(),
+        valorTotalServicos: orcamento.getValorTotalServicos(),
+        valorTotalPecas: orcamento.getValorTotalPecas(),
+        valorTotalGeral: orcamento.getValorTotalGeral(),
+        status: StatusOrcamento.PENDING,
+      });
+      orcamentos.set(orcamento.getOrdemServicoId(), pendente);
+      pagamentos.delete(orcamento.getOrdemServicoId());
+      return Promise.resolve();
     },
     recusarSePendente: (orcamento: Orcamento) => {
       orcamentos.set(orcamento.getOrdemServicoId(), orcamento);
@@ -74,6 +91,10 @@ describe('Rotas do Billing', () => {
   );
   const pagamentoRepository = {
     findByOrdemServicoId: (id: string) => Promise.resolve(pagamentos.get(id) ?? null),
+    salvarCobranca: (pagamento: Pagamento) => {
+      pagamentos.set(pagamento.getOrdemServicoId(), pagamento);
+      return Promise.resolve();
+    },
     salvarComNotificacao,
     jaRecebida: (n: NotificacaoRecebida) =>
       Promise.resolve(notificacoesGravadas.has(`${n.providerEventId}|${n.tipo}`)),
@@ -215,6 +236,30 @@ describe('Rotas do Billing', () => {
 
     await request(server).patch(`/api/v1/orcamentos/${ordemServicoId}/aprovar`).expect(502);
     expect(orcamentos.get(ordemServicoId)?.getStatus()).toBe(StatusOrcamento.PENDING);
+  });
+
+  it('duas aprovações simultâneas na borda: só uma cobra no Mercado Pago, a outra recebe 409', async () => {
+    let resolverMp!: (cobranca: { preferenceId: string; linkPagamento: string }) => void;
+    gateway.criarCobranca.mockImplementationOnce(
+      () => new Promise((resolve) => (resolverMp = resolve))
+    );
+
+    const primeira = request(server)
+      .patch(`/api/v1/orcamentos/${ordemServicoId}/aprovar`)
+      .then((resposta) => resposta);
+    while (gateway.criarCobranca.mock.calls.length === 0) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    await request(server).patch(`/api/v1/orcamentos/${ordemServicoId}/aprovar`).expect(409);
+    resolverMp({ preferenceId: 'pref-1', linkPagamento: 'https://mp/pref-1' });
+
+    await expect(primeira).resolves.toMatchObject({
+      status: 200,
+      body: { linkPagamento: 'https://mp/pref-1' },
+    });
+    expect(gateway.criarCobranca).toHaveBeenCalledTimes(1);
+    expect(publicador.publicar).toHaveBeenCalledTimes(1);
   });
 
   it('recusa sem token (rota pública) e leva o orçamento a REJECTED', async () => {
@@ -419,14 +464,36 @@ describe('Rotas do Billing', () => {
       expect(publicador.publicar).not.toHaveBeenCalled();
     });
 
-    it('IPN legado e merchant_order respondem 200 e são ignorados', async () => {
-      await request(server).post('/api/v1/webhooks/mercado-pago?id=1&topic=payment').expect(200);
+    it('IPN legado sem assinatura devolve 401 (o Mercado Pago não assina IPN)', async () => {
+      await request(server).post('/api/v1/webhooks/mercado-pago?id=1&topic=payment').expect(401);
+
+      expect(gateway.consultarPagamento).not.toHaveBeenCalled();
+      expect(salvarComNotificacao).not.toHaveBeenCalled();
+    });
+
+    it('merchant_order e type=payment sem data.id, com assinatura válida, respondem 200 sem efeito', async () => {
       await request(server)
         .post('/api/v1/webhooks/mercado-pago?type=topic_merchant_order_wh&data.id=1')
+        .set(assinatura('1'))
+        .expect(200);
+
+      const ts = String(Date.now());
+      const v1 = createHmac('sha256', chaveWebhook)
+        .update(`request-id:req-2;ts:${ts};`)
+        .digest('hex');
+      await request(server)
+        .post('/api/v1/webhooks/mercado-pago?type=payment')
+        .set({ 'x-signature': `ts=${ts},v1=${v1}`, 'x-request-id': 'req-2' })
         .expect(200);
 
       expect(gateway.consultarPagamento).not.toHaveBeenCalled();
       expect(salvarComNotificacao).not.toHaveBeenCalled();
+    });
+
+    it('merchant_order sem assinatura devolve 401', async () => {
+      await request(server)
+        .post('/api/v1/webhooks/mercado-pago?type=topic_merchant_order_wh&data.id=1')
+        .expect(401);
     });
 
     it('mesma notificação entregue duas vezes: 200 nas duas e uma única atualização', async () => {

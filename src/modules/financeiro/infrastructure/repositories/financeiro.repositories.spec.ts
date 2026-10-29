@@ -31,11 +31,11 @@ describe('Repositórios do financeiro', () => {
 
   const tx = {
     orcamento: { updateMany: jest.fn() },
-    pagamento: { create: jest.fn() },
+    pagamento: { create: jest.fn(), deleteMany: jest.fn() },
   };
   const prisma = {
     orcamento: { findUnique: jest.fn(), create: jest.fn(), updateMany: jest.fn() },
-    pagamento: { findUnique: jest.fn() },
+    pagamento: { findUnique: jest.fn(), update: jest.fn() },
     webhookRecebido: { findUnique: jest.fn(), create: jest.fn() },
     $transaction: jest.fn((fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
   };
@@ -50,10 +50,8 @@ describe('Repositórios do financeiro', () => {
     valorTotalGeral: 770.5,
     status: StatusOrcamento.APPROVED,
   });
-  const pagamento = Pagamento.criar(ordemServicoId, 770.5, {
-    preferenceId: 'pref-1',
-    linkPagamento: 'https://mp/pref-1',
-  });
+  // Reserva da aprovação: ainda sem cobrança do Mercado Pago.
+  const pagamento = Pagamento.reservar(ordemServicoId, 770.5);
 
   const violacaoUnicidade = () =>
     new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
@@ -127,8 +125,24 @@ describe('Repositórios do financeiro', () => {
       expect(tx.pagamento.create.mock.calls[0][0].data).toMatchObject({
         ordemServicoId,
         status: 'AGUARDANDO_PAGAMENTO',
-        preferenceId: 'pref-1',
-        linkPagamento: 'https://mp/pref-1',
+        preferenceId: null,
+        linkPagamento: null,
+      });
+    });
+
+    it('desfaz a reserva na mesma transação: remove o pagamento sem cobrança e volta o orçamento a PENDING', async () => {
+      tx.pagamento.deleteMany.mockResolvedValue({ count: 1 });
+      tx.orcamento.updateMany.mockResolvedValue({ count: 1 });
+
+      await orcamentoRepository.desfazerAprovacao(orcamento, pagamento);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(tx.pagamento.deleteMany).toHaveBeenCalledWith({
+        where: { id: pagamento.getId(), linkPagamento: null },
+      });
+      expect(tx.orcamento.updateMany).toHaveBeenCalledWith({
+        where: { id: 'orc-1', status: EstimateStatus.APPROVED },
+        data: { status: EstimateStatus.PENDING },
       });
     });
 
@@ -175,6 +189,19 @@ describe('Repositórios do financeiro', () => {
     it('devolve null quando a OS não tem pagamento', async () => {
       prisma.pagamento.findUnique.mockResolvedValue(null);
       await expect(pagamentoRepository.findByOrdemServicoId(ordemServicoId)).resolves.toBeNull();
+    });
+
+    it('salvarCobranca grava a preference e o link da reserva', async () => {
+      const reservado = Pagamento.reservar(ordemServicoId, 770.5);
+      reservado.vincularCobranca({ preferenceId: 'pref-1', linkPagamento: 'https://mp/pref-1' });
+      prisma.pagamento.update.mockResolvedValue({});
+
+      await pagamentoRepository.salvarCobranca(reservado);
+
+      expect(prisma.pagamento.update).toHaveBeenCalledWith({
+        where: { id: reservado.getId() },
+        data: { preferenceId: 'pref-1', linkPagamento: 'https://mp/pref-1' },
+      });
     });
 
     describe('notificações que não mudam o Pagamento (estorno de aprovado indevido)', () => {
@@ -267,10 +294,8 @@ describe('Repositórios do financeiro', () => {
       };
 
       const confirmado = () => {
-        const p = Pagamento.criar(ordemServicoId, 770.5, {
-          preferenceId: 'pref-1',
-          linkPagamento: 'https://mp/pref-1',
-        });
+        const p = Pagamento.reservar(ordemServicoId, 770.5);
+        p.vincularCobranca({ preferenceId: 'pref-1', linkPagamento: 'https://mp/pref-1' });
         p.confirmar('mp-1');
         return p;
       };

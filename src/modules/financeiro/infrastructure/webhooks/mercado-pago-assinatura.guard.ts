@@ -10,10 +10,10 @@ import { InvalidWebhookSignatureError, WebhookSignatureValidator } from 'mercado
 import type { Request } from 'express';
 
 // Valida o x-signature (HMAC-SHA256) com o validador oficial do SDK, antes de qualquer efeito.
-// O data.id vem da query string, como define a documentação do Mercado Pago.
-// Só a notificação de pagamento (type=payment com data.id) altera estado; as demais
-// (ex.: IPN legado ?id=&topic=, que não traz data.id e nunca valida) passam sem assinatura
-// e o controller as ignora com 200, para o Mercado Pago não ficar reenviando.
+// Toda notificação precisa de assinatura válida (#325): ausente, inválida ou sem chave configurada
+// devolve 401, inclusive as que não alteram estado (IPN legado ?id=&topic=, merchant_order), que o
+// Mercado Pago não assina. O data.id vem da query string, como define a documentação; quando a
+// query não traz data.id, o SDK monta o manifesto sem o campo.
 @Injectable()
 export class MercadoPagoAssinaturaGuard implements CanActivate {
   private readonly logger = new Logger(MercadoPagoAssinaturaGuard.name);
@@ -24,9 +24,6 @@ export class MercadoPagoAssinaturaGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
-    if (request.query['type'] !== 'payment' || !request.query['data.id']) {
-      return true;
-    }
 
     // data.id repetido na query: o validador usaria só o primeiro, e o controller receberia um array.
     if (Array.isArray(request.query['data.id'])) {
@@ -49,7 +46,7 @@ export class MercadoPagoAssinaturaGuard implements CanActivate {
       WebhookSignatureValidator.validate({
         xSignature: request.header('x-signature'),
         xRequestId: request.header('x-request-id'),
-        dataId: request.query['data.id'] as string,
+        dataId: request.query['data.id'] as string | undefined,
         secret,
       });
       return true;

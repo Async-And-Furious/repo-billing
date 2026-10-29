@@ -12,11 +12,11 @@ describe('MercadoPagoAssinaturaGuard', () => {
   const guard = new MercadoPagoAssinaturaGuard(config);
 
   // Assinatura no formato documentado pelo Mercado Pago: HMAC-SHA256 do manifesto com a chave.
-  const assinar = (id: string, reqId: string, chave = chaveDeTeste): string => {
+  // Sem data.id na query, o manifesto sai sem o campo id.
+  const assinar = (id: string | undefined, reqId: string, chave = chaveDeTeste): string => {
     const ts = String(Date.now());
-    const v1 = createHmac('sha256', chave)
-      .update(`id:${id};request-id:${reqId};ts:${ts};`)
-      .digest('hex');
+    const manifesto = `${id === undefined ? '' : `id:${id};`}request-id:${reqId};ts:${ts};`;
+    const v1 = createHmac('sha256', chave).update(manifesto).digest('hex');
     return `ts=${ts},v1=${v1}`;
   };
 
@@ -93,8 +93,27 @@ describe('MercadoPagoAssinaturaGuard', () => {
     ['IPN legado (?id=&topic=)', { id: '1', topic: 'payment' }],
     ['merchant_order', { type: 'topic_merchant_order_wh', 'data.id': '1' }],
     ['type=payment sem data.id', { type: 'payment' }],
-  ])('deixa passar sem checar assinatura o que não altera estado: %s', (_nome, query) => {
-    expect(guard.canActivate(contexto(query))).toBe(true);
+  ])('recusa com 401 sem assinatura, mesmo o que não altera estado: %s', (_nome, query) => {
+    expect(() => guard.canActivate(contexto(query))).toThrow(UnauthorizedException);
+  });
+
+  it('aceita merchant_order com assinatura válida (não altera estado, o controller responde 200)', () => {
+    const headers = { 'x-signature': assinar('1', requestId), 'x-request-id': requestId };
+    expect(
+      guard.canActivate(contexto({ type: 'topic_merchant_order_wh', 'data.id': '1' }, headers))
+    ).toBe(true);
+  });
+
+  it('aceita type=payment sem data.id com assinatura válida (manifesto sem o campo id)', () => {
+    const headers = { 'x-signature': assinar(undefined, requestId), 'x-request-id': requestId };
+    expect(guard.canActivate(contexto({ type: 'payment' }, headers))).toBe(true);
+  });
+
+  it('recusa IPN com assinatura inválida com 401', () => {
+    const headers = { 'x-signature': 'lixo', 'x-request-id': requestId };
+    expect(() => guard.canActivate(contexto({ id: '1', topic: 'payment' }, headers))).toThrow(
+      UnauthorizedException
+    );
   });
 
   it('recusa data.id repetido na query com 401', () => {
