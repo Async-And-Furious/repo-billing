@@ -193,7 +193,7 @@ Dispara em push para `main` que altere `src/`, `prisma/`, `k8s/`, `scripts/deplo
 
 `k8s/` guarda placeholders `${nome}`, sem valor real no Git. `scripts/deploy/render-k8s.mjs` preenche cada `${nome}` com a variável de ambiente `NOME` (em maiúscula), como string JSON, que é YAML válido, então PEM e senhas com caracteres especiais não quebram o arquivo. Se o manifesto referencia uma variável vazia ou ausente, o deploy para antes de aplicar qualquer coisa. O padrão de placeholders segue a ADR-0015 (`templatefile()` no Terraform); o renderizador é deste repositório.
 
-O `secret.yaml` passa a referenciar `${mp_webhook_secret}` com o merge do repo-billing#1 (#325); antes dele, `MP_WEBHOOK_SECRET` não é exigida. Depois dele, a variável é obrigatória e o deploy para com a lista do que falta. `MP_PREFERENCE_EXPIRACAO_HORAS` é literal `'48'` no configmap (#325), não placeholder, então o pipeline não a preenche.
+O `secret.yaml` referencia `${mp_webhook_secret}` desde o repo-billing#1 (#325), então `MP_WEBHOOK_SECRET` é obrigatória: sem ela, o deploy para com a lista do que falta. `MP_PREFERENCE_EXPIRACAO_HORAS` é literal `'48'` no configmap (#325), não placeholder, então o pipeline não a preenche.
 
 O `replicas` do Deployment é literal (`2`), e não placeholder, porque o renderer põe valores entre aspas e o campo precisa ser inteiro.
 
@@ -285,7 +285,7 @@ O namespace `billing` e o ECR `tc3-billing-hml` são criados pelo `repo-k8s-infr
 - Decisões em aberto da #325 (ADR-0022): tratar `refunded`/`charged_back` (hoje ignorados), `approved` com valor divergente numa cobrança pendente (hoje só log de erro, o dinheiro fica retido), e um status persistido de "estorno pendente" caso o refund não funcione no sandbox (ver "Estorno (refund) e fallback no sandbox"). A tabela `webhook_recebido` cresce sem limpeza.
 - Papéis de `GET /api/v1/pagamentos/{ordemServicoId}`: `ADMIN`/`RECEPCIONISTA`, como a consulta do orçamento; `saga-flow.md` só diz "JWT". O Billing não guarda o dono da OS, então `CLIENTE` não pode ser restrito ao próprio pagamento.
 - `MP_PREFERENCE_EXPIRACAO_HORAS` precisa casar com o prazo do detector de OS parada quando o OS Service o implementar.
-- O pipeline de deploy (#327) precisa preencher `${mp_webhook_secret}` do `k8s/secret.yaml`, além de `${mp_access_token}` e `${mp_notification_url}`.
+- O pipeline de deploy (#327) preenche `${mp_access_token}`, `${mp_webhook_secret}` e `${mp_notification_url}` a partir do environment `hml` (ver "Esteira"). Falta criar esses secrets e variáveis no environment.
 - Banco `billing`/role `billing_app` e o teste de acesso cruzado só podem ser validados em HML, após o `repo-db-infra` PR #31 e o Job de bootstrap.
 - Divergência do template, herdada do `repo-execucao-service`: o `jwt.config.ts` foi reduzido a verificação (sem assinatura).
-- O workflow de CI não é cópia do OS Service: o template da #333 ainda não foi publicado.
+- O template de esteira foi publicado em `docs/infrastructure/template-servico.md` do `async-furious-project` (#369). O workflow de CI deste repositório foi escrito antes dele e ainda não foi conferido contra o template.
