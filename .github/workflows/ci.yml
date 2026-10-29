@@ -1,5 +1,7 @@
 name: CI
 
+# Checks obrigatórios da branch main: tests, sonar e trivy (ver README, seção "Esteira").
+# Até a proteção da main ser trocada, o job `validate` (transição) também é exigido.
 on:
   push:
     branches: [main]
@@ -9,20 +11,164 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  tests:
+    name: tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          version: 10.18.3
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec prisma generate
-      - run: pnpm exec eslint "{src,test}/**/*.ts"
-      - run: pnpm type:check
-      - run: pnpm test:cov
-      - run: pnpm build
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      - name: Gerar cliente Prisma
+        run: pnpm exec prisma generate
+
+      - name: Lint
+        run: pnpm exec eslint "{src,test}/**/*.ts"
+
+      - name: Type check
+        run: pnpm type:check
+
+      - name: Testes com gate de cobertura (80/80/80/80)
+        run: pnpm test:cov
+
+      - name: Publicar lcov para o Sonar
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Build
+        run: pnpm build
+
+  sonar:
+    name: sonar
+    needs: tests
+    # Fork não recebe o SONAR_TOKEN: o job é pulado, e pulado conta como aprovado na proteção (README, "Esteira").
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Baixar lcov gerado pelo job tests
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage
+
+      - name: Análise SonarCloud
+        uses: SonarSource/sonarqube-scan-action@v8.4.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          # Quality Gate bloqueante só em main; em PR a análise é informativa (decoração do PR).
+          args: ${{ github.event_name == 'push' && '-Dsonar.qualitygate.wait=true' || '' }}
+
+  trivy:
+    name: trivy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      IMAGE_REF: local/repo-billing:${{ github.sha }}
+      TRIVY_CACHE_DIR: .trivy-cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build da imagem Docker
+        run: docker build --tag "$IMAGE_REF" .
+
+      - name: Trivy relatório em tabela
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REF }}
+          scanners: vuln
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: table
+          output: trivy-image-report.txt
+          exit-code: '0'
+
+      - name: Trivy relatório SARIF
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REF }}
+          scanners: vuln
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: '0'
+
+      - name: Enviar SARIF
+        uses: github/codeql-action/upload-sarif@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        continue-on-error: true
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Publicar relatórios do Trivy
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-reports-${{ github.run_id }}
+          path: |
+            trivy-image-report.txt
+            trivy-results.sarif
+          retention-days: 30
+
+      - name: Relatório HIGH e CRITICAL (informativo)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        # Mesmo comportamento do template do monólito (informativo até decisão do grupo).
+        continue-on-error: true
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REF }}
+          scanners: vuln
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: '1'
+
+  # Transição (README, "Esteira" > "Atenção"): a proteção atual da main exige o check `validate`.
+  # Aprova só se `tests` passou. O `if: always()` é obrigatório: sem ele, `tests` falho deixaria
+  # este job pulado, e um check pulado conta como aprovado na proteção de branch.
+  # Remover este job quando a proteção da main exigir tests, sonar e trivy.
+  validate:
+    name: validate
+    needs: tests
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      TESTS_RESULT: ${{ needs.tests.result }}
+    steps:
+      - name: Exigir tests verde
+        run: |
+          if [[ "$TESTS_RESULT" != 'success' ]]; then
+            echo "O job tests terminou com resultado: $TESTS_RESULT" >&2
+            exit 1
+          fi

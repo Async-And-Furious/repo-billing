@@ -1,0 +1,201 @@
+name: Deploy Billing to HML EKS
+
+# Deploy independente do Billing: só dispara com mudança deste repositório e nunca depende
+# do pipeline de outro serviço. Ordem: imagem no ECR tc3-billing-hml, migration
+# (prisma migrate deploy) e, por fim, o rollout no namespace billing.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'prisma/**'
+      - 'k8s/**'
+      - 'scripts/deploy/**'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'nest-cli.json'
+      - 'tsconfig*.json'
+      - '.nvmrc'
+      - '.github/workflows/deploy-eks.yml'
+  workflow_dispatch:
+    inputs:
+      seed_hml:
+        description: Rodar o seed de demonstração do Billing em HML (idempotente)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: billing-deploy-hml
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  image:
+    name: Build and push image
+    # Só a main deploya: o disparo manual de outra branch não leva código não revisado ao HML.
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: hml
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Resolver repositório ECR do Billing (repo-k8s-infra)
+        id: ecr
+        run: bash scripts/deploy/infra.sh ecr
+
+      - name: Build e push (tag = SHA do commit; reaproveita se já existe)
+        id: image
+        env:
+          REPOSITORY: ${{ steps.ecr.outputs.repository }}
+        run: |
+          set -euo pipefail
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          registry="$account_id.dkr.ecr.$AWS_REGION.amazonaws.com"
+          image="$registry/$REPOSITORY:$GITHUB_SHA"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$registry"
+          if digest=$(aws ecr describe-images --region "$AWS_REGION" --repository-name "$REPOSITORY" \
+            --image-ids imageTag="$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null); then
+            echo "Imagem do commit já existe no ECR; reaproveitando."
+          else
+            docker build --pull --tag "$image" .
+            docker push "$image"
+            digest=$(aws ecr describe-images --region "$AWS_REGION" --repository-name "$REPOSITORY" \
+              --image-ids imageTag="$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          fi
+          [[ "$digest" == sha256:* ]] || { echo 'O ECR não devolveu o digest da imagem.' >&2; exit 1; }
+          echo "ref=$registry/$REPOSITORY@$digest" >> "$GITHUB_OUTPUT"
+          echo "### Imagem imutável: \`$registry/$REPOSITORY@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-hml:
+    name: Deploy HML
+    needs: image
+    # `success()` explícito: com `if`, o implícito deixa de valer e o deploy rodaria mesmo com a imagem falha.
+    if: ${{ success() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: hml
+    env:
+      APP_IMAGE: ${{ needs.image.outputs.image }}
+      JWT_PUBLIC_KEY_PARAMETER_NAME: ${{ vars.JWT_PUBLIC_KEY_PARAMETER_NAME }}
+      # Kafka: broker interno do repo-k8s-infra (kafka.kafka.svc.cluster.local:9092, SASL PLAIN).
+      KAFKA_BROKERS: ${{ vars.KAFKA_BROKERS || 'kafka.kafka.svc.cluster.local:9092' }}
+      KAFKA_SASL_USERNAME: ${{ vars.KAFKA_SASL_USERNAME || 'app' }}
+      # Mercado Pago (credenciais de teste; ver README, seção "Secrets e variáveis").
+      MP_ACCESS_TOKEN: ${{ secrets.MP_ACCESS_TOKEN }}
+      MP_NOTIFICATION_URL: ${{ vars.MP_NOTIFICATION_URL }}
+      MP_WEBHOOK_SECRET: ${{ secrets.MP_WEBHOOK_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Setup Node.js (renderização dos manifests, versão do .nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+
+      - name: Resolver cluster, target group e banco (states do repo-k8s-infra e do repo-db-infra)
+        run: bash scripts/deploy/infra.sh infra
+
+      - name: Ler segredos (banco, Kafka e chave pública JWT)
+        run: bash scripts/deploy/infra.sh segredos
+
+      - name: Liberar acesso temporário do runner ao endpoint do EKS HML
+        run: bash scripts/deploy/infra.sh eks-abrir
+
+      - name: Preflight do cluster e do namespace
+        run: |
+          set -euo pipefail
+          status=$(aws eks describe-cluster --region "$AWS_REGION" --name "$CLUSTER_NAME" --query 'cluster.status' --output text)
+          [[ "$status" == 'ACTIVE' ]] || { echo "Cluster EKS não está ACTIVE: $status" >&2; exit 1; }
+          aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
+          kubectl get --raw=/readyz >/dev/null
+          # O namespace é criado pelo repo-k8s-infra (ADR-0020); o deploy do Billing não o cria.
+          kubectl get namespace billing >/dev/null || {
+            echo 'Namespace billing ausente: provisionar pelo repo-k8s-infra antes do deploy.' >&2
+            exit 1
+          }
+
+      - name: Renderizar manifests (placeholders ${...} de k8s/)
+        run: |
+          set -euo pipefail
+          node scripts/deploy/render-k8s.mjs "$RUNNER_TEMP/k8s" \
+            k8s/configmap.yaml k8s/secret.yaml \
+            k8s/migration-job.yaml k8s/seed-job-hml.yaml \
+            k8s/deployment.yaml k8s/service.yaml \
+            k8s/target-group-binding.yaml k8s/hpa.yaml
+
+      - name: Aplicar ConfigMap e Secret
+        run: |
+          set -euo pipefail
+          kubectl apply -f "$RUNNER_TEMP/k8s/configmap.yaml" -f "$RUNNER_TEMP/k8s/secret.yaml"
+
+      - name: Migration (prisma migrate deploy antes do rollout)
+        run: |
+          set -euo pipefail
+          kubectl delete job/billing-migrate --namespace billing --ignore-not-found=true --wait=true
+          kubectl apply -f "$RUNNER_TEMP/k8s/migration-job.yaml"
+          kubectl wait --for=condition=complete job/billing-migrate --namespace billing --timeout=10m || {
+            kubectl logs job/billing-migrate --namespace billing --all-containers=true || true
+            kubectl describe job/billing-migrate --namespace billing || true
+            exit 1
+          }
+          kubectl logs job/billing-migrate --namespace billing --all-containers=true
+
+      - name: Seed de demonstração em HML (só com seed_hml marcado)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.seed_hml }}
+        run: |
+          set -euo pipefail
+          kubectl delete job/billing-seed-hml --namespace billing --ignore-not-found=true --wait=true
+          kubectl apply -f "$RUNNER_TEMP/k8s/seed-job-hml.yaml"
+          kubectl wait --for=condition=complete job/billing-seed-hml --namespace billing --timeout=10m || {
+            kubectl logs job/billing-seed-hml --namespace billing --all-containers=true || true
+            exit 1
+          }
+          kubectl logs job/billing-seed-hml --namespace billing --all-containers=true
+
+      - name: Rollout do Billing (Deployment, Service, TargetGroupBinding e HPA)
+        run: |
+          set -euo pipefail
+          kubectl apply -f "$RUNNER_TEMP/k8s/deployment.yaml"
+          kubectl apply -f "$RUNNER_TEMP/k8s/service.yaml"
+          kubectl apply -f "$RUNNER_TEMP/k8s/target-group-binding.yaml"
+          kubectl apply -f "$RUNNER_TEMP/k8s/hpa.yaml"
+          kubectl rollout status deployment/billing-api --namespace billing --timeout=10m
+
+      - name: Diagnóstico do rollout
+        if: ${{ failure() }}
+        run: |
+          kubectl get pods --namespace billing -o wide || true
+          kubectl describe deployment/billing-api --namespace billing || true
+          kubectl describe pods --namespace billing --selector app=billing-api || true
+          kubectl logs --namespace billing --selector app=billing-api --all-containers=true --tail=200 || true
+
+      - name: Restaurar endpoint do EKS HML ao estado original
+        if: ${{ always() }}
+        run: bash scripts/deploy/infra.sh eks-restaurar
