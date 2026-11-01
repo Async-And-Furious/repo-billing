@@ -3,6 +3,7 @@ import { PrismaService } from '../../../../shared/infrastructure/database/prisma
 import { PagamentoMapper } from '../persistence/financeiro.mapper';
 import { violouUnicidade } from '../persistence/prisma-errors';
 import type { Pagamento, StatusPagamento } from '../../domain/entities/pagamento.entity';
+import { StatusPagamento as Status } from '../../domain/entities/pagamento.entity';
 import type {
   IPagamentoRepository,
   NotificacaoRecebida,
@@ -28,6 +29,22 @@ export class PagamentoRepository implements IPagamentoRepository {
         linkPagamento: pagamento.getLinkPagamento(),
       },
     });
+  }
+
+  async cancelarSePendente(ordemServicoId: string): Promise<boolean> {
+    const { count } = await this.prisma.pagamento.updateMany({
+      where: { ordemServicoId, status: Status.AGUARDANDO_PAGAMENTO },
+      data: { status: Status.CANCELADO },
+    });
+    return count > 0;
+  }
+
+  async estornarSeConfirmado(ordemServicoId: string): Promise<boolean> {
+    const { count } = await this.prisma.pagamento.updateMany({
+      where: { ordemServicoId, status: Status.CONFIRMADO },
+      data: { status: Status.ESTORNADO },
+    });
+    return count > 0;
   }
 
   async salvarComNotificacao(

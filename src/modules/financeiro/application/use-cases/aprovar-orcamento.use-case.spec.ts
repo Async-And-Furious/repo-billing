@@ -67,6 +67,8 @@ describe('AprovarOrcamentoUseCase', () => {
     pagamentoRepository = {
       findByOrdemServicoId: jest.fn().mockResolvedValue(null),
       salvarCobranca: jest.fn().mockResolvedValue(undefined),
+      cancelarSePendente: jest.fn(),
+      estornarSeConfirmado: jest.fn(),
       salvarComNotificacao: jest.fn(),
       jaRecebida: jest.fn(),
       registrar: jest.fn(),

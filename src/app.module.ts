@@ -6,6 +6,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { DatabaseModule } from './shared/infrastructure/database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { FinanceiroModule } from './modules/financeiro/financeiro.module';
+import { KafkaConsumidorModule } from './modules/financeiro/infrastructure/messaging/kafka-consumidor.module';
 import { HealthModule } from './modules/health/health.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -21,6 +22,7 @@ import { pinoHttpOptions } from './shared/infrastructure/logging/pino-logger.con
     DatabaseModule,
     AuthModule,
     FinanceiroModule,
+    KafkaConsumidorModule,
     HealthModule,
   ],
   providers: [
