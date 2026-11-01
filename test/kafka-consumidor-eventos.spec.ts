@@ -25,12 +25,6 @@ describe('BillingEventProcessor', () => {
   });
 
   const setup = () => {
-    const prisma = {
-      processedEvent: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue({}),
-      },
-    };
     const orcamento = { handle: jest.fn().mockResolvedValue('GERADO') };
     const compensar = { execute: jest.fn().mockResolvedValue(undefined) };
     const publicador = {
@@ -39,14 +33,13 @@ describe('BillingEventProcessor', () => {
     };
     const wait = jest.fn().mockResolvedValue(undefined);
     const processor = new BillingEventProcessor(
-      prisma as never,
       orcamento as never,
       compensar as never,
       publicador as never,
       () => now,
       wait
     );
-    return { processor, prisma, orcamento, compensar, publicador, wait };
+    return { processor, orcamento, compensar, publicador, wait };
   };
 
   const message = (value: unknown) => Buffer.from(JSON.stringify(value));
@@ -60,33 +53,20 @@ describe('BillingEventProcessor', () => {
     ]);
   });
 
-  it('handles OrcamentoCalculado and records its eventId before acknowledging', async () => {
-    const { processor, orcamento, prisma } = setup();
-    const order: string[] = [];
-    orcamento.handle.mockImplementation(() => {
-      order.push('handle');
-      return Promise.resolve('GERADO');
-    });
-    prisma.processedEvent.create.mockImplementation(() => {
-      order.push('processed');
-      return Promise.resolve({});
-    });
+  it('dispatches OrcamentoCalculado to the state-idempotent budget handler', async () => {
+    const { processor, orcamento } = setup();
 
     await processor.process('os.eventos.v1', 'os-1', message(envelope()));
 
     expect(orcamento.handle).toHaveBeenCalledWith(envelope().data);
-    expect(order).toEqual(['handle', 'processed']);
-    expect(prisma.processedEvent.create).toHaveBeenCalledWith({ data: { eventId: 'event-1' } });
   });
 
-  it('does not re-run a previously processed event', async () => {
-    const { processor, orcamento, prisma } = setup();
-    prisma.processedEvent.findUnique.mockResolvedValue({ eventId: 'event-1' });
-
+  it('re-delivers messages to the business state guard without a processed-events table', async () => {
+    const { processor, orcamento } = setup();
+    await processor.process('os.eventos.v1', 'os-1', message(envelope()));
     await processor.process('os.eventos.v1', 'os-1', message(envelope()));
 
-    expect(orcamento.handle).not.toHaveBeenCalled();
-    expect(prisma.processedEvent.create).not.toHaveBeenCalled();
+    expect(orcamento.handle).toHaveBeenCalledTimes(2);
   });
 
   it.each(['os.eventos.v1', 'execucao.eventos.v1'])(

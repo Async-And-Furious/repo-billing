@@ -2,13 +2,11 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { Kafka, type Consumer } from 'kafkajs';
 import { randomUUID } from 'node:crypto';
 import { DomainException } from '../../../../shared/domain/exceptions/domain.exception';
-import { PrismaService } from '../../../../shared/infrastructure/database/prisma.service';
 import { CompensarFalhaSagaHandler } from '../../application/event-handlers/compensar-falha-saga.handler';
 import { GerarOrcamentoHandler } from '../../application/event-handlers/gerar-orcamento.handler';
 import type { OrcamentoCalculado } from '../../domain/events/orcamento.events';
 import { EtapaDaSagaFalhou } from '../../domain/events/etapa-da-saga-falhou.event';
 import { KafkaPublicadorEventos, billingKafkaConfig } from './kafka-publicador-eventos';
-import { violouUnicidade } from '../persistence/prisma-errors';
 
 export const BILLING_CONSUMER_GROUP = 'billing-consumer';
 export const BILLING_RETRY_TOPIC = 'billing.retry.v1';
@@ -118,7 +116,6 @@ export class BillingEventProcessor {
   private readonly logger = new Logger(BillingEventProcessor.name);
 
   constructor(
-    private readonly prisma: PrismaService,
     private readonly orcamento: GerarOrcamentoHandler,
     private readonly compensar: CompensarFalhaSagaHandler,
     private readonly publicador: KafkaPublicadorEventos,
@@ -161,7 +158,6 @@ export class BillingEventProcessor {
     }
 
     try {
-      if (await this.wasProcessed(envelope.eventId)) return;
       if (topic === BILLING_DLT_TOPIC) {
         this.validateKeyAndCorrelation(envelope, key);
         await this.processDeadLetter(envelope);
@@ -169,9 +165,21 @@ export class BillingEventProcessor {
         this.validateKeyAndCorrelation(envelope, key);
         await this.dispatch(envelope);
       }
-      await this.markProcessed(envelope.eventId);
+      this.logConsumed(topic, envelope);
     } catch (error) {
-      if (topic === BILLING_DLT_TOPIC) throw error;
+      if (topic === BILLING_DLT_TOPIC) {
+        this.logger.error(
+          {
+            eventId: envelope.eventId,
+            correlationId: envelope.correlationId,
+            ordemServicoId: envelope.data.ordemServicoId,
+            eventType: envelope.eventType,
+            error: errorText(error),
+          },
+          'Falha ao processar mensagem na DLT'
+        );
+        throw error;
+      }
       if (error instanceof DomainException && envelope.eventType === 'OrcamentoCalculado') {
         const ordemServicoId = envelope.data.ordemServicoId;
         if (typeof ordemServicoId === 'string') {
@@ -185,14 +193,16 @@ export class BillingEventProcessor {
                 errorText(error)
               )
             );
-            await this.markProcessed(envelope.eventId);
+            this.logConsumed(topic, envelope);
             return;
           } catch (publishError) {
+            this.logFailure(topic, envelope, publishError);
             await this.scheduleRetry(topic, key, envelope, publishError);
             return;
           }
         }
       }
+      this.logFailure(topic, envelope, error);
       await this.scheduleRetry(topic, key, envelope, error);
     }
   }
@@ -253,21 +263,31 @@ export class BillingEventProcessor {
     );
   }
 
-  private async wasProcessed(eventId: string): Promise<boolean> {
-    return (
-      (await this.prisma.processedEvent.findUnique({
-        where: { eventId },
-        select: { eventId: true },
-      })) !== null
+  private logConsumed(topic: string, envelope: EventEnvelope): void {
+    this.logger.log(
+      {
+        eventId: envelope.eventId,
+        correlationId: envelope.correlationId,
+        ordemServicoId: envelope.data.ordemServicoId ?? null,
+        eventType: envelope.eventType,
+        topic,
+      },
+      'Evento billing consumido'
     );
   }
 
-  private async markProcessed(eventId: string): Promise<void> {
-    try {
-      await this.prisma.processedEvent.create({ data: { eventId } });
-    } catch (error) {
-      if (!violouUnicidade(error)) throw error;
-    }
+  private logFailure(topic: string, envelope: EventEnvelope, error: unknown): void {
+    this.logger.warn(
+      {
+        eventId: envelope.eventId,
+        correlationId: envelope.correlationId,
+        ordemServicoId: envelope.data.ordemServicoId ?? null,
+        eventType: envelope.eventType,
+        topic,
+        error: errorText(error),
+      },
+      'Falha no processamento; mensagem será retentada'
+    );
   }
 
   private async scheduleRetry(
@@ -307,7 +327,6 @@ export class KafkaConsumidorEventos implements OnModuleInit, OnModuleDestroy {
   private connected = false;
 
   constructor(
-    prisma: PrismaService,
     orcamento: GerarOrcamentoHandler,
     compensar: CompensarFalhaSagaHandler,
     publicador: KafkaPublicadorEventos
@@ -316,7 +335,7 @@ export class KafkaConsumidorEventos implements OnModuleInit, OnModuleDestroy {
     this.consumer = this.kafka.consumer({
       groupId: process.env.KAFKA_CONSUMER_GROUP || BILLING_CONSUMER_GROUP,
     });
-    this.processor = new BillingEventProcessor(prisma, orcamento, compensar, publicador);
+    this.processor = new BillingEventProcessor(orcamento, compensar, publicador);
   }
 
   async onModuleInit(): Promise<void> {
