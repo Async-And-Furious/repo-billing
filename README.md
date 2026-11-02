@@ -103,7 +103,7 @@ Notas de operação:
 
 ## Estratégia de Saga
 
-**Coreografada** (ADR-0016, `docs/architecture/saga-flow.md` no `async-furious-project`). O Billing não recebe comandos: reage a eventos do Kafka e publica os seus em `billing.eventos.v1`. O consumer assina `os.eventos.v1`, `execucao.eventos.v1`, `billing.retry.v1` e `billing.dlt.v1`; o producer usa `acks=all`, idempotência e chave `ordemServicoId`. Não há outbox; veja o limite de recuperação acima.
+O fluxo de Ordem de Serviço é coordenado por uma Saga coreografada (ADR-0016): não há orquestrador nem chamadas REST entre microsserviços. Cada serviço publica e consome eventos Kafka com correlationId = ordemServicoId. Esta escolha reduz acoplamento síncrono, mas abre mão de uma visão central do estado da Saga e de um único ponto de timeout; cada serviço responde por suas transições, retries e compensações. Veja a [ADR-0016 — Saga coreografada](https://github.com/Async-And-Furious/async-furious-project/blob/develop/docs/adr/0016-saga-coreografada.md) e o [fluxo completo da Saga](https://github.com/Async-And-Furious/async-furious-project/blob/develop/docs/architecture/saga-flow.md).
 
 ## Autenticação
 
