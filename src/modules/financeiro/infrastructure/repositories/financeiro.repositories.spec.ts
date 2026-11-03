@@ -35,7 +35,7 @@ describe('Repositórios do financeiro', () => {
   };
   const prisma = {
     orcamento: { findUnique: jest.fn(), create: jest.fn(), updateMany: jest.fn() },
-    pagamento: { findUnique: jest.fn(), update: jest.fn() },
+    pagamento: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
     webhookRecebido: { findUnique: jest.fn(), create: jest.fn() },
     $transaction: jest.fn((fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
   };
@@ -138,12 +138,45 @@ describe('Repositórios do financeiro', () => {
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       expect(tx.pagamento.deleteMany).toHaveBeenCalledWith({
-        where: { id: pagamento.getId(), linkPagamento: null },
+        where: {
+          id: pagamento.getId(),
+          linkPagamento: null,
+          status: 'AGUARDANDO_PAGAMENTO',
+        },
       });
       expect(tx.orcamento.updateMany).toHaveBeenCalledWith({
         where: { id: 'orc-1', status: EstimateStatus.APPROVED },
         data: { status: EstimateStatus.PENDING },
       });
+    });
+
+    it('não apaga pagamento já cancelado nem reabre orçamento após falha do gateway', async () => {
+      tx.pagamento.deleteMany.mockResolvedValue({ count: 0 });
+      await orcamentoRepository.desfazerAprovacao(orcamento, pagamento);
+      expect(tx.orcamento.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('closes only an open budget on saga failure', async () => {
+      tx.orcamento.updateMany.mockResolvedValue({ count: 0 });
+      await expect(orcamentoRepository.encerrarSeAberto(ordemServicoId)).resolves.toBe(false);
+      expect(prisma.orcamento.updateMany).toHaveBeenCalledWith({
+        where: {
+          ordemServicoId,
+          status: { in: [EstimateStatus.PENDING, EstimateStatus.APPROVED] },
+        },
+        data: { status: EstimateStatus.REJECTED },
+      });
+    });
+
+    it('makes a later approval lose after saga closure wins the same conditional row update', async () => {
+      tx.orcamento.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+      await expect(orcamentoRepository.encerrarSeAberto(ordemServicoId)).resolves.toBe(true);
+      await expect(orcamentoRepository.aprovarComPagamento(orcamento, pagamento)).resolves.toBe(
+        false
+      );
+      expect(tx.pagamento.create).not.toHaveBeenCalled();
     });
 
     it('não insere pagamento se o orçamento já não estava PENDING', async () => {
@@ -194,14 +227,21 @@ describe('Repositórios do financeiro', () => {
     it('salvarCobranca grava a preference e o link da reserva', async () => {
       const reservado = Pagamento.reservar(ordemServicoId, 770.5);
       reservado.vincularCobranca({ preferenceId: 'pref-1', linkPagamento: 'https://mp/pref-1' });
-      prisma.pagamento.update.mockResolvedValue({});
+      prisma.pagamento.updateMany.mockResolvedValue({ count: 1 });
 
       await pagamentoRepository.salvarCobranca(reservado);
 
-      expect(prisma.pagamento.update).toHaveBeenCalledWith({
-        where: { id: reservado.getId() },
+      expect(prisma.pagamento.updateMany).toHaveBeenCalledWith({
+        where: { id: reservado.getId(), status: StatusPagamento.AGUARDANDO_PAGAMENTO },
         data: { preferenceId: 'pref-1', linkPagamento: 'https://mp/pref-1' },
       });
+    });
+
+    it('não grava link de cobrança se saga já cancelou a reserva', async () => {
+      const reservado = Pagamento.reservar(ordemServicoId, 770.5);
+      reservado.vincularCobranca({ preferenceId: 'pref-1', linkPagamento: 'https://mp/pref-1' });
+      prisma.pagamento.updateMany.mockResolvedValue({ count: 0 });
+      await expect(pagamentoRepository.salvarCobranca(reservado)).rejects.toThrow('cancelado');
     });
 
     describe('notificações que não mudam o Pagamento (estorno de aprovado indevido)', () => {

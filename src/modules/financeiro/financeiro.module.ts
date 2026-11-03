@@ -42,9 +42,12 @@ import type {
     },
     {
       provide: CompensarFalhaSagaHandler,
-      useFactory: (pagamentos: IPagamentoRepository, gateway: IGatewayPagamento) =>
-        new CompensarFalhaSagaHandler(pagamentos, gateway),
-      inject: [PAGAMENTO_REPOSITORY, GATEWAY_PAGAMENTO],
+      useFactory: (
+        pagamentos: IPagamentoRepository,
+        gateway: IGatewayPagamento,
+        orcamentos: IOrcamentoRepository
+      ) => new CompensarFalhaSagaHandler(pagamentos, gateway, orcamentos),
+      inject: [PAGAMENTO_REPOSITORY, GATEWAY_PAGAMENTO, ORCAMENTO_REPOSITORY],
     },
     {
       provide: AprovarOrcamentoUseCase,

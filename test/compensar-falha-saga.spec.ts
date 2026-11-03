@@ -8,6 +8,7 @@ import type {
   IPagamentoRepository,
 } from '../src/modules/financeiro/domain/interfaces/financeiro.interfaces';
 import { PagamentoRepository } from '../src/modules/financeiro/infrastructure/repositories/pagamento.repository';
+import type { IOrcamentoRepository } from '../src/modules/financeiro/domain/interfaces/financeiro.interfaces';
 
 describe('CompensarFalhaSagaHandler', () => {
   const payment = (status: StatusPagamento, externalId: string | null = 'mp-1') =>
@@ -24,6 +25,9 @@ describe('CompensarFalhaSagaHandler', () => {
     });
 
   const setup = (pagamento: Pagamento | null) => {
+    const orcamentoRepository = {
+      encerrarSeAberto: jest.fn().mockResolvedValue(true),
+    } as unknown as jest.Mocked<IOrcamentoRepository>;
     const repository: jest.Mocked<IPagamentoRepository> = {
       findByOrdemServicoId: jest.fn().mockResolvedValue(pagamento),
       salvarCobranca: jest.fn(),
@@ -41,17 +45,31 @@ describe('CompensarFalhaSagaHandler', () => {
     return {
       repository,
       gateway,
-      handler: new CompensarFalhaSagaHandler(repository, gateway),
+      orcamentoRepository,
+      handler: new CompensarFalhaSagaHandler(repository, gateway, orcamentoRepository),
     };
   };
 
-  it('ignores unrelated stages and missing payments', async () => {
-    const { handler, repository, gateway } = setup(null);
+  it('closes pending budget when saga failure arrives before payment exists', async () => {
+    const { handler, repository, gateway, orcamentoRepository } = setup(null);
     await handler.execute({ ordemServicoId: 'os-1', etapa: 'orcamento' });
-    expect(repository.findByOrdemServicoId).not.toHaveBeenCalled();
+    expect(orcamentoRepository.encerrarSeAberto).not.toHaveBeenCalled();
     await handler.execute({ ordemServicoId: 'os-1', etapa: 'inicio-execucao' });
     expect(repository.findByOrdemServicoId).toHaveBeenCalledTimes(1);
+    expect(orcamentoRepository.encerrarSeAberto).toHaveBeenCalledWith('os-1');
     expect(gateway.estornar).not.toHaveBeenCalled();
+  });
+
+  it('re-reads payment when approval won the conditional budget closure race', async () => {
+    const { handler, repository, gateway, orcamentoRepository } = setup(null);
+    orcamentoRepository.encerrarSeAberto.mockResolvedValue(false);
+    repository.findByOrdemServicoId.mockResolvedValue(payment(StatusPagamento.CONFIRMADO));
+    repository.estornarSeConfirmado.mockResolvedValue(true);
+
+    await handler.execute({ ordemServicoId: 'os-1', etapa: 'aprovacao-pagamento' });
+
+    expect(repository.findByOrdemServicoId).toHaveBeenCalledTimes(1);
+    expect(gateway.estornar).toHaveBeenCalledWith('mp-1');
   });
 
   it('cancels pending payments without calling Mercado Pago', async () => {

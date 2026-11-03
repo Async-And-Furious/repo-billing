@@ -37,6 +37,7 @@ describe('GerarOrcamentoHandler', () => {
       aprovarComPagamento: jest.fn(),
       desfazerAprovacao: jest.fn(),
       recusarSePendente: jest.fn(),
+      encerrarSeAberto: jest.fn(),
     };
     publicador = { publicar: jest.fn().mockResolvedValue(undefined) };
     handler = new GerarOrcamentoHandler(repository, publicador);

@@ -63,6 +63,7 @@ describe('AprovarOrcamentoUseCase', () => {
       aprovarComPagamento: jest.fn().mockResolvedValue(true),
       desfazerAprovacao: jest.fn().mockResolvedValue(undefined),
       recusarSePendente: jest.fn(),
+      encerrarSeAberto: jest.fn(),
     };
     pagamentoRepository = {
       findByOrdemServicoId: jest.fn().mockResolvedValue(null),

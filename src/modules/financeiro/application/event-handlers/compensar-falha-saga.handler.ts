@@ -2,6 +2,7 @@ import { StatusPagamento } from '../../domain/entities/pagamento.entity';
 import type { EtapaDaSagaFalhou } from '../../domain/events/etapa-da-saga-falhou.event';
 import type {
   IGatewayPagamento,
+  IOrcamentoRepository,
   IPagamentoRepository,
 } from '../../domain/interfaces/financeiro.interfaces';
 
@@ -10,12 +11,14 @@ const ETAPAS_COMPENSAVEIS = new Set(['aprovacao-pagamento', 'inicio-execucao']);
 export class CompensarFalhaSagaHandler {
   constructor(
     private readonly pagamentos: IPagamentoRepository,
-    private readonly gateway: IGatewayPagamento
+    private readonly gateway: IGatewayPagamento,
+    private readonly orcamentos: IOrcamentoRepository
   ) {}
 
   async execute(evento: Pick<EtapaDaSagaFalhou, 'ordemServicoId' | 'etapa'>): Promise<void> {
     if (!ETAPAS_COMPENSAVEIS.has(evento.etapa)) return;
 
+    await this.orcamentos.encerrarSeAberto(evento.ordemServicoId);
     const pagamento = await this.pagamentos.findByOrdemServicoId(evento.ordemServicoId);
     if (!pagamento) return;
 

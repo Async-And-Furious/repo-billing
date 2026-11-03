@@ -74,6 +74,22 @@ describe('Rotas do Billing', () => {
       orcamentos.set(orcamento.getOrdemServicoId(), orcamento);
       return Promise.resolve(true);
     },
+    encerrarSeAberto: async (ordemServicoId: string) => {
+      const atual = orcamentos.get(ordemServicoId);
+      if (!atual || (!atual.estaPendente() && !atual.estaAprovado())) return false;
+      orcamentos.set(
+        ordemServicoId,
+        Orcamento.reconstituir({
+          id: atual.getId(),
+          ordemServicoId,
+          valorTotalServicos: atual.getValorTotalServicos(),
+          valorTotalPecas: atual.getValorTotalPecas(),
+          valorTotalGeral: atual.getValorTotalGeral(),
+          status: StatusOrcamento.REJECTED,
+        })
+      );
+      return true;
+    },
   };
   // Como o banco: grava a transição do Pagamento e a notificação juntas; a mesma notificação
   // duas vezes viola o unique e devolve false.

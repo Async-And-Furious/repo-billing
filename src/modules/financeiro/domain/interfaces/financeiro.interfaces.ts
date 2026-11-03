@@ -39,6 +39,8 @@ export interface IOrcamentoRepository {
   desfazerAprovacao(orcamento: Orcamento, pagamento: Pagamento): Promise<void>;
   // Transição atômica PENDING → REJECTED; false se outra transição chegou antes.
   recusarSePendente(orcamento: Orcamento): Promise<boolean>;
+  // Fecha atomicamente orçamento PENDING ou APPROVED; aprovação e falha concorrem na mesma linha.
+  encerrarSeAberto(ordemServicoId: string): Promise<boolean>;
 }
 
 export interface IPagamentoRepository {
