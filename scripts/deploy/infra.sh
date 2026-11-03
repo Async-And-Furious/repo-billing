@@ -158,6 +158,16 @@ eks_config_atual() {
     --output json
 }
 
+# eks_acesso_aberto <atual.json> <cidr do runner>: imprime o --resources-vpc-config da abertura.
+# Com o acesso público ligado, acrescenta o /32 à lista atual. Com o endpoint só privado, o EKS
+# devolve publicAccessCidrs = ["0.0.0.0/0"]: acrescentar o /32 a essa lista abriria o endpoint
+# para a internet inteira, então abre só para o runner.
+eks_acesso_aberto() {
+  jq -r --arg cidr "$2" '
+    (if .endpointPublicAccess then ([.publicAccessCidrs[]?, $cidr] | unique) else [$cidr] end) as $cidrs |
+    "endpointPrivateAccess=\(.endpointPrivateAccess),endpointPublicAccess=true,publicAccessCidrs=\($cidrs | join(","))"' "$1"
+}
+
 # eks_acesso_restaurado <original.json> <atual.json> <cidr do runner>: imprime o
 # --resources-vpc-config da restauração, ou nada se o endpoint já está como deve ficar.
 #
@@ -166,16 +176,20 @@ eks_config_atual() {
 # ATUAL, não da salva no início: tira só o /32 deste run (se ele não estava na lista
 # original) e mantém o que outros pipelines liberaram depois. O acesso público só volta ao
 # valor original quando não sobrou nenhum CIDR além dos originais; senão, outro deploy ainda
-# está usando o endpoint e ele mesmo restaura ao terminar.
+# está usando o endpoint e ele mesmo restaura ao terminar. Se não sobrou CIDR nenhum, todos eram
+# de runners: o acesso público é desligado (ligado com lista vazia valeria como 0.0.0.0/0).
+# Mesma regra de scripts/eks_endpoint_access.py no async-furious-project.
 eks_acesso_restaurado() {
   jq -r -n --slurpfile original "$1" --slurpfile atual "$2" --arg cidr "$3" '
     $original[0] as $o | $atual[0] as $a |
     ($o.publicAccessCidrs // []) as $cidrs_originais |
     (if ($cidrs_originais | index($cidr)) != null then ($a.publicAccessCidrs // [])
      else (($a.publicAccessCidrs // []) - [$cidr]) end) as $cidrs |
-    (($cidrs - $cidrs_originais) | length > 0) as $outros_runs |
-    (if $outros_runs then true else $o.endpointPublicAccess end) as $publico |
-    if $publico == $a.endpointPublicAccess and ($cidrs | sort) == (($a.publicAccessCidrs // []) | sort)
+    (if ($cidrs | length) == 0 then false
+     elif (($cidrs - $cidrs_originais) | length) > 0 then true
+     else $o.endpointPublicAccess end) as $publico |
+    if ($publico | not) and ($a.endpointPublicAccess | not) then empty
+    elif $publico and $a.endpointPublicAccess and ($cidrs | sort) == (($a.publicAccessCidrs // []) | sort)
     then empty
     else "endpointPrivateAccess=\($a.endpointPrivateAccess),endpointPublicAccess=\($publico)"
       + (if ($cidrs | length) > 0 then ",publicAccessCidrs=" + ($cidrs | join(",")) else "" end)
@@ -218,9 +232,7 @@ eks_abrir() {
   [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || erro "IP do runner inesperado"
   printf '%s' "$ip/32" >"$(eks_cidr_runner)"
 
-  acesso=$(jq -r --arg cidr "$ip/32" \
-    '"endpointPrivateAccess=\(.endpointPrivateAccess),endpointPublicAccess=true,publicAccessCidrs=\(([.publicAccessCidrs[]?, $cidr] | unique) | join(","))"' \
-    "$estado")
+  acesso=$(eks_acesso_aberto "$estado" "$ip/32")
   atualizar_acesso_eks "$acesso"
   resumo "Acesso temporário do runner ($ip/32) ao EKS HML liberado."
 }
