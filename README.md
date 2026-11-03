@@ -182,12 +182,14 @@ Dispara em push para `main` que altere `src/`, `prisma/`, `k8s/`, `scripts/deplo
 2. **`deploy-hml`** (environment `hml`, depende de `image`):
    - resolve cluster, target group do Billing e banco (`scripts/deploy/infra.sh infra`), pelos states do `repo-k8s-infra` e do `repo-db-infra`;
    - lê os segredos de runtime (`scripts/deploy/infra.sh segredos`): senha do banco no secret `tc3-db-billing-hml`, senha do Kafka em `tc3/kafka/hml` e chave pública JWT no SSM;
-   - libera temporariamente o IP do runner no endpoint do EKS (o endpoint é privado) e devolve a configuração original num step `if: always()`;
+   - libera temporariamente o IP do runner no endpoint do EKS (o endpoint é privado). No fim, num step `if: always()`, relê a configuração atual e remove só o próprio `/32`, preservando o que os deploys do OS e do Execução liberaram no mesmo cluster. O acesso público só volta ao valor original quando não sobra IP de outro run. A lógica está em `eks_acesso_restaurado` (`scripts/deploy/infra.sh`), com os cenários de corrida em `scripts/deploy/infra-eks-acesso.spec.ts`;
    - verifica se o cluster está `ACTIVE` e se o namespace `billing` existe. O namespace não é criado aqui: é do `repo-k8s-infra` (ADR-0020 deste repositório de infra, não a do monólito);
    - renderiza `k8s/` e aplica ConfigMap e Secret;
    - **migration antes do rollout**: apaga o `billing-migrate` anterior, aplica o Job (`prisma migrate deploy`) e espera completar;
    - seed de demonstração só se `seed_hml` estiver marcado no disparo manual (idempotente, `DEPLOY_ENV=hml`);
    - aplica Deployment, Service, TargetGroupBinding e HPA e espera o `rollout status`.
+
+**O gate da `main` é só sinalização.** O `deploy-eks.yml` dispara no push da `main` em paralelo ao `ci.yml`, sem depender dele. Então, se `tests` ou `sonar` falharem no push, a imagem já foi para o HML. O que barra código ruim é a proteção da `main`: PR obrigatório com os checks `tests`, `sonar` e `trivy`. Para o gate valer também depois do merge, o deploy pode passar a disparar por `workflow_run` do CI com `conclusion == 'success'`. Isso fica para quando o `SONAR_TOKEN` da organização voltar a funcionar: hoje o job `sonar` falha em todos os repositórios, e o `workflow_run` bloquearia todo deploy.
 
 ### Placeholders e renderização
 
@@ -248,12 +250,12 @@ Manifestos em `k8s/`, aplicados pelo pipeline (exceto onde indicado):
 |---|---|---|
 | `configmap.yaml` | `billing-config` | variáveis não sensíveis; `KAFKA_BROKERS` e `MP_NOTIFICATION_URL` são placeholders |
 | `secret.yaml` | `billing-secret` | `DATABASE_URL`, `JWT_PUBLIC_KEY`, Kafka e Mercado Pago são placeholders |
-| `deployment.yaml` | `billing-api` | 2 réplicas; probes em `/api/v1/health/*`; limites de CPU e memória |
+| `deployment.yaml` | `billing-api` | sem `replicas` fixo (quem decide é o HPA); probes em `/api/v1/health/*`; limites de CPU e memória |
 | `service.yaml` | `billing-service` | ClusterIP 3000 |
 | `target-group-binding.yaml` | `billing-api` | registra os pods no target group do Billing do ALB interno (`TARGET_GROUP_ARN`) |
 | `hpa.yaml` | `billing-hpa` | 2 a 3 réplicas por CPU e memória |
-| `migration-job.yaml` | `billing-migrate` | `prisma migrate deploy`, roda antes do rollout |
-| `seed-job-hml.yaml` | `billing-seed-hml` | seed de demonstração, só com `seed_hml` no disparo manual |
+| `migration-job.yaml` | `billing-migrate` | `prisma migrate deploy`, roda antes do rollout; pod com label `app: billing-migrate`, fora do Service e do target group |
+| `seed-job-hml.yaml` | `billing-seed-hml` | seed de demonstração, só com `seed_hml` no disparo manual; pod com label `app: billing-seed-hml`, fora do Service |
 
 O namespace `billing` e o ECR `tc3-billing-hml` são criados pelo `repo-k8s-infra`. Não há manifesto de namespace neste repositório.
 
@@ -267,7 +269,6 @@ O namespace `billing` e o ECR `tc3-billing-hml` são criados pelo `repo-k8s-infr
 - Prova do gate de 80% no GitHub (seção acima) e print do Quality Gate no SonarCloud.
 - Deploy real em HML: não foi executado (sem acesso a AWS nem kubectl neste ambiente).
 - Evidência de cobertura para o critério da issue: link do run verde do job `tests` na `main` (ou print do Sonar) colado aqui depois do primeiro run.
-- Swagger com a rota de webhook e as de pagamento: `docs/openapi.json` da `main` ainda não tem `GET /api/v1/pagamentos/{ordemServicoId}` nem a descrição de assinatura do webhook. Isso chega com o merge do repo-billing#1 (#325), que regenera o arquivo.
 
 **Fora deste repositório (não alterado por esta issue):**
 

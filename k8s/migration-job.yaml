@@ -4,15 +4,16 @@ metadata:
   name: billing-migrate
   namespace: billing
   labels:
-    app: billing-api
+    app: billing-migrate
     job: migration
 spec:
   backoffLimit: 3
   ttlSecondsAfterFinished: 86400
   template:
     metadata:
+      # Label próprio: com app: billing-api o pod entraria no Service e no target group do ALB.
       labels:
-        app: billing-api
+        app: billing-migrate
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false

@@ -4,7 +4,7 @@ metadata:
   name: billing-api
   namespace: billing
 spec:
-  replicas: 2
+  # Sem replicas: o HPA (2 a 3) decide. Com o valor fixo, cada kubectl apply voltaria para 2.
   selector:
     matchLabels:
       app: billing-api

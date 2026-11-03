@@ -147,6 +147,41 @@ eks_estado_original() {
   printf '%s' "$WORK_DIR/eks-endpoint-original.json"
 }
 
+# CIDR que este run liberou no endpoint (o /32 do runner). Na restauração, só ele sai da lista.
+eks_cidr_runner() {
+  printf '%s' "$WORK_DIR/eks-runner-cidr"
+}
+
+eks_config_atual() {
+  aws eks describe-cluster --region "$AWS_REGION" --name "$CLUSTER_NAME" \
+    --query 'cluster.resourcesVpcConfig.{endpointPrivateAccess:endpointPrivateAccess,endpointPublicAccess:endpointPublicAccess,publicAccessCidrs:publicAccessCidrs}' \
+    --output json
+}
+
+# eks_acesso_restaurado <original.json> <atual.json> <cidr do runner>: imprime o
+# --resources-vpc-config da restauração, ou nada se o endpoint já está como deve ficar.
+#
+# O OS, o Billing e o Execução liberam o próprio runner no mesmo cluster e o `concurrency`
+# de cada workflow só vale dentro do repositório. Por isso a restauração parte da lista
+# ATUAL, não da salva no início: tira só o /32 deste run (se ele não estava na lista
+# original) e mantém o que outros pipelines liberaram depois. O acesso público só volta ao
+# valor original quando não sobrou nenhum CIDR além dos originais; senão, outro deploy ainda
+# está usando o endpoint e ele mesmo restaura ao terminar.
+eks_acesso_restaurado() {
+  jq -r -n --slurpfile original "$1" --slurpfile atual "$2" --arg cidr "$3" '
+    $original[0] as $o | $atual[0] as $a |
+    ($o.publicAccessCidrs // []) as $cidrs_originais |
+    (if ($cidrs_originais | index($cidr)) != null then ($a.publicAccessCidrs // [])
+     else (($a.publicAccessCidrs // []) - [$cidr]) end) as $cidrs |
+    (($cidrs - $cidrs_originais) | length > 0) as $outros_runs |
+    (if $outros_runs then true else $o.endpointPublicAccess end) as $publico |
+    if $publico == $a.endpointPublicAccess and ($cidrs | sort) == (($a.publicAccessCidrs // []) | sort)
+    then empty
+    else "endpointPrivateAccess=\($a.endpointPrivateAccess),endpointPublicAccess=\($publico)"
+      + (if ($cidrs | length) > 0 then ",publicAccessCidrs=" + ($cidrs | join(",")) else "" end)
+    end'
+}
+
 # atualizar_acesso_eks <configuração de resources-vpc-config>: espera o update terminar com sucesso.
 atualizar_acesso_eks() {
   local acesso="$1" erro_arquivo update_id status deadline
@@ -177,12 +212,11 @@ eks_abrir() {
   local estado ip acesso
   : "${CLUSTER_NAME:?CLUSTER_NAME ausente (rode infra antes)}"
   estado=$(eks_estado_original)
-  aws eks describe-cluster --region "$AWS_REGION" --name "$CLUSTER_NAME" \
-    --query 'cluster.resourcesVpcConfig.{endpointPrivateAccess:endpointPrivateAccess,endpointPublicAccess:endpointPublicAccess,publicAccessCidrs:publicAccessCidrs}' \
-    --output json >"$estado"
+  eks_config_atual >"$estado"
 
   ip=$(curl --fail --silent --show-error --ipv4 --proto '=https' https://checkip.amazonaws.com | tr -d '[:space:]')
   [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || erro "IP do runner inesperado"
+  printf '%s' "$ip/32" >"$(eks_cidr_runner)"
 
   acesso=$(jq -r --arg cidr "$ip/32" \
     '"endpointPrivateAccess=\(.endpointPrivateAccess),endpointPublicAccess=true,publicAccessCidrs=\(([.publicAccessCidrs[]?, $cidr] | unique) | join(","))"' \
@@ -192,18 +226,24 @@ eks_abrir() {
 }
 
 eks_restaurar() {
-  local estado acesso
+  local estado cidr_arquivo atual acesso
   estado=$(eks_estado_original)
-  if [[ ! -s "$estado" ]]; then
+  cidr_arquivo=$(eks_cidr_runner)
+  if [[ ! -s "$estado" || ! -s "$cidr_arquivo" ]]; then
     resumo 'Sem estado salvo do endpoint do EKS (o acesso nunca foi aberto); nada a restaurar.'
     return 0
   fi
   : "${CLUSTER_NAME:?CLUSTER_NAME ausente: sem ele não há como restaurar o endpoint}"
-  acesso=$(jq -r \
-    '"endpointPrivateAccess=\(.endpointPrivateAccess),endpointPublicAccess=\(.endpointPublicAccess)" + (if (.publicAccessCidrs | length) > 0 then ",publicAccessCidrs=" + (.publicAccessCidrs | join(",")) else "" end)' \
-    "$estado")
+  atual=$(mktemp)
+  eks_config_atual >"$atual"
+  acesso=$(eks_acesso_restaurado "$estado" "$atual" "$(cat "$cidr_arquivo")")
+  rm -f "$atual"
+  if [[ -z "$acesso" ]]; then
+    resumo 'Endpoint do EKS HML já sem o acesso deste run; nada a restaurar.'
+    return 0
+  fi
   atualizar_acesso_eks "$acesso"
-  resumo 'Endpoint do EKS HML restaurado para a configuração original.'
+  resumo "Acesso do runner ($(cat "$cidr_arquivo")) removido do endpoint do EKS HML; liberações de outros deploys preservadas."
 }
 
 CONTA=""
