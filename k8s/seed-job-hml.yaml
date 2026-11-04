@@ -6,15 +6,16 @@ metadata:
   name: billing-seed-hml
   namespace: billing
   labels:
-    app: billing-api
+    app: billing-seed-hml
     job: seed
 spec:
   backoffLimit: 1
   ttlSecondsAfterFinished: 86400
   template:
     metadata:
+      # Label próprio: com app: billing-api o pod entraria no Service e no target group do ALB.
       labels:
-        app: billing-api
+        app: billing-seed-hml
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false

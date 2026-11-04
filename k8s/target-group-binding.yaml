@@ -1,0 +1,14 @@
+# Registra os pods do Billing no target group do ALB interno (repo-k8s-infra, ADR-0020).
+# O ALB roteia por recurso: /api/v1/orcamentos*, /api/v1/pagamentos*, /api/v1/webhooks/mercado-pago
+# e /api/docs/billing*. O pipeline preenche ${target_group_arn} a partir do state do repo-k8s-infra.
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: billing-api
+  namespace: billing
+spec:
+  targetGroupARN: ${target_group_arn}
+  targetType: ip
+  serviceRef:
+    name: billing-service
+    port: 3000
