@@ -258,6 +258,22 @@ describe('AprovarOrcamentoUseCase', () => {
       });
       expect(gateway.criarCobranca).toHaveBeenCalledTimes(1);
     });
+
+    it('falha de Saga fecha a reserva durante o gateway e impede publicação tardia do link', async () => {
+      const vencedora = useCase.execute(ordemServicoId);
+      await aguardarChamadaMp();
+
+      banco.status = StatusOrcamento.REJECTED;
+      pagamentoRepository.salvarCobranca.mockRejectedValue(
+        new ConflitoException('O pagamento da OS foi cancelado.')
+      );
+      resolverMp(cobranca);
+
+      await expect(vencedora).rejects.toThrow(ConflitoException);
+      expect(banco.status).toBe(StatusOrcamento.REJECTED);
+      expect(publicador.publicar).not.toHaveBeenCalled();
+      expect(orcamentoRepository.desfazerAprovacao).not.toHaveBeenCalled();
+    });
   });
 
   it('orçamento APPROVED sem cobrança gravada vira conflito', async () => {

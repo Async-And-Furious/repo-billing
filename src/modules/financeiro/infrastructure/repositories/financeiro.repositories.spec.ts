@@ -157,7 +157,7 @@ describe('Repositórios do financeiro', () => {
     });
 
     it('closes only an open budget on saga failure', async () => {
-      tx.orcamento.updateMany.mockResolvedValue({ count: 0 });
+      prisma.orcamento.updateMany.mockResolvedValue({ count: 0 });
       await expect(orcamentoRepository.encerrarSeAberto(ordemServicoId)).resolves.toBe(false);
       expect(prisma.orcamento.updateMany).toHaveBeenCalledWith({
         where: {
@@ -169,9 +169,8 @@ describe('Repositórios do financeiro', () => {
     });
 
     it('makes a later approval lose after saga closure wins the same conditional row update', async () => {
-      tx.orcamento.updateMany
-        .mockResolvedValueOnce({ count: 1 })
-        .mockResolvedValueOnce({ count: 0 });
+      prisma.orcamento.updateMany.mockResolvedValueOnce({ count: 1 });
+      tx.orcamento.updateMany.mockResolvedValueOnce({ count: 0 });
       await expect(orcamentoRepository.encerrarSeAberto(ordemServicoId)).resolves.toBe(true);
       await expect(orcamentoRepository.aprovarComPagamento(orcamento, pagamento)).resolves.toBe(
         false

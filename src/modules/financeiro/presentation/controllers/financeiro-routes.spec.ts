@@ -74,9 +74,9 @@ describe('Rotas do Billing', () => {
       orcamentos.set(orcamento.getOrdemServicoId(), orcamento);
       return Promise.resolve(true);
     },
-    encerrarSeAberto: async (ordemServicoId: string) => {
+    encerrarSeAberto: (ordemServicoId: string) => {
       const atual = orcamentos.get(ordemServicoId);
-      if (!atual || (!atual.estaPendente() && !atual.estaAprovado())) return false;
+      if (!atual || (!atual.estaPendente() && !atual.estaAprovado())) return Promise.resolve(false);
       orcamentos.set(
         ordemServicoId,
         Orcamento.reconstituir({
@@ -88,7 +88,7 @@ describe('Rotas do Billing', () => {
           status: StatusOrcamento.REJECTED,
         })
       );
-      return true;
+      return Promise.resolve(true);
     },
   };
   // Como o banco: grava a transição do Pagamento e a notificação juntas; a mesma notificação

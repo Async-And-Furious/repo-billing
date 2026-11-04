@@ -60,14 +60,14 @@ describe('CompensarFalhaSagaHandler', () => {
     expect(gateway.estornar).not.toHaveBeenCalled();
   });
 
-  it('re-reads payment when approval won the conditional budget closure race', async () => {
+  it('checks payment after closing an in-flight approval and refunds a confirmed winner', async () => {
     const { handler, repository, gateway, orcamentoRepository } = setup(null);
-    orcamentoRepository.encerrarSeAberto.mockResolvedValue(false);
     repository.findByOrdemServicoId.mockResolvedValue(payment(StatusPagamento.CONFIRMADO));
     repository.estornarSeConfirmado.mockResolvedValue(true);
 
     await handler.execute({ ordemServicoId: 'os-1', etapa: 'aprovacao-pagamento' });
 
+    expect(orcamentoRepository.encerrarSeAberto).toHaveBeenCalledWith('os-1');
     expect(repository.findByOrdemServicoId).toHaveBeenCalledTimes(1);
     expect(gateway.estornar).toHaveBeenCalledWith('mp-1');
   });

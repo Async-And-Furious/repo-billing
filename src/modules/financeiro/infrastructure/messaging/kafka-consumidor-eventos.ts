@@ -20,6 +20,7 @@ export const BILLING_SUBSCRIPTIONS = [
 
 const MAX_TENTATIVAS = 3;
 const BACKOFF_MS = [30_000, 60_000];
+const HEARTBEAT_INTERVAL_MS = 10_000;
 
 interface RetryMetadata {
   attempt: number;
@@ -45,10 +46,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const errorText = (error: unknown): string =>
   (error instanceof Error ? error.message : 'Falha desconhecida')
     .replace(/\s+/g, ' ')
+    .replace(/(password|token|authorization|secret|api[_-]?key)\s*[:=]\s*\S+/gi, '$1=[REDACTED]')
     .slice(0, 500);
 
+class InvalidMessageError extends Error {}
+
 const parseEnvelope = (value: Buffer | null): EventEnvelope => {
-  if (!value) throw new Error('Mensagem Kafka sem payload.');
+  if (!value) throw new InvalidMessageError('Mensagem Kafka sem payload.');
   const parsed: unknown = JSON.parse(value.toString());
   if (
     !isRecord(parsed) ||
@@ -63,7 +67,7 @@ const parseEnvelope = (value: Buffer | null): EventEnvelope => {
     typeof parsed.producer !== 'string' ||
     !isRecord(parsed.data)
   ) {
-    throw new Error('Envelope Kafka inválido.');
+    throw new InvalidMessageError('Envelope Kafka inválido.');
   }
   if (
     parsed.retry !== undefined &&
@@ -77,10 +81,10 @@ const parseEnvelope = (value: Buffer | null): EventEnvelope => {
       typeof parsed.retry.notBefore !== 'string' ||
       !Number.isFinite(Date.parse(parsed.retry.notBefore)))
   ) {
-    throw new Error('Metadados de retry inválidos.');
+    throw new InvalidMessageError('Metadados de retry inválidos.');
   }
   if (parsed.lastError !== undefined && typeof parsed.lastError !== 'string') {
-    throw new Error('Campo lastError inválido.');
+    throw new InvalidMessageError('Campo lastError inválido.');
   }
   return parsed as unknown as EventEnvelope;
 };
@@ -90,8 +94,14 @@ const isOrcamentoCalculado = (
 ): data is Record<string, unknown> & OrcamentoCalculado =>
   typeof data.ordemServicoId === 'string' &&
   typeof data.valorTotalServicos === 'number' &&
+  Number.isFinite(data.valorTotalServicos) &&
+  data.valorTotalServicos >= 0 &&
   typeof data.valorTotalPecas === 'number' &&
-  typeof data.valorTotalGeral === 'number';
+  Number.isFinite(data.valorTotalPecas) &&
+  data.valorTotalPecas >= 0 &&
+  typeof data.valorTotalGeral === 'number' &&
+  Number.isFinite(data.valorTotalGeral) &&
+  data.valorTotalGeral >= 0;
 
 type SagaFailureData = {
   ordemServicoId: string;
@@ -111,6 +121,7 @@ const isEtapaDaSagaFalhou = (
   typeof data.motivo === 'string';
 
 type Wait = (milliseconds: number) => Promise<void>;
+type Heartbeat = () => Promise<void>;
 
 export class BillingEventProcessor {
   private readonly logger = new Logger(BillingEventProcessor.name);
@@ -123,44 +134,28 @@ export class BillingEventProcessor {
     private readonly wait: Wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   ) {}
 
-  async process(topic: string, key: string | null, value: Buffer | null): Promise<void> {
+  async process(
+    topic: string,
+    key: string | null,
+    value: Buffer | null,
+    heartbeat: Heartbeat = () => Promise.resolve()
+  ): Promise<void> {
     let envelope: EventEnvelope;
     try {
       envelope = parseEnvelope(value);
     } catch (error) {
-      if (topic === BILLING_DLT_TOPIC) {
-        this.logger.error(
-          { topic, key, error: errorText(error) },
-          'Mensagem inválida retida na DLT'
-        );
-        return;
-      }
-      const eventId = randomUUID();
-      const now = this.now().toISOString();
-      await this.publicador.publicarEnvelope(BILLING_DLT_TOPIC, key, {
-        eventId,
-        eventType: 'InvalidEnvelope',
-        eventVersion: 1,
-        occurredAt: now,
-        correlationId: key ?? eventId,
-        producer: 'billing-service',
-        data: {},
-        retry: { attempt: MAX_TENTATIVAS, firstFailedAt: now, notBefore: now },
-        lastError: errorText(error),
-      });
+      await this.handleInvalidMessage(topic, key, error);
       return;
     }
 
     if (topic === BILLING_RETRY_TOPIC && envelope.retry) {
-      const remaining = Date.parse(envelope.retry.notBefore) - this.now().getTime();
-      // shortcut: waiting blocks other keys in this partition; use partition pause/resume if retry volume causes head-of-line delay.
-      if (Number.isFinite(remaining) && remaining > 0) await this.wait(remaining);
+      await this.waitForRetry(envelope.retry.notBefore, heartbeat);
     }
 
     try {
       if (topic === BILLING_DLT_TOPIC) {
         this.validateKeyAndCorrelation(envelope, key);
-        await this.processDeadLetter(envelope);
+        if (!(await this.processDeadLetter(envelope))) return;
       } else {
         this.validateKeyAndCorrelation(envelope, key);
         await this.dispatch(envelope);
@@ -168,6 +163,17 @@ export class BillingEventProcessor {
       this.logConsumed(topic, envelope);
     } catch (error) {
       if (topic === BILLING_DLT_TOPIC) {
+        if (error instanceof InvalidMessageError || error instanceof DomainException) {
+          this.logger.error(
+            {
+              eventId: envelope.eventId,
+              correlationId: envelope.correlationId,
+              error: errorText(error),
+            },
+            'Mensagem inválida retida na DLT; ignorada sem republicação'
+          );
+          return;
+        }
         this.logger.error(
           {
             eventId: envelope.eventId,
@@ -180,27 +186,9 @@ export class BillingEventProcessor {
         );
         throw error;
       }
-      if (error instanceof DomainException && envelope.eventType === 'OrcamentoCalculado') {
-        const ordemServicoId = envelope.data.ordemServicoId;
-        if (typeof ordemServicoId === 'string') {
-          try {
-            await this.publicador.publicar(
-              new EtapaDaSagaFalhou(
-                ordemServicoId,
-                'billing-service',
-                envelope.eventType,
-                'orcamento',
-                errorText(error)
-              )
-            );
-            this.logConsumed(topic, envelope);
-            return;
-          } catch (publishError) {
-            this.logFailure(topic, envelope, publishError);
-            await this.scheduleRetry(topic, key, envelope, publishError);
-            return;
-          }
-        }
+      if (error instanceof InvalidMessageError || error instanceof DomainException) {
+        await this.handleInvalidMessage(topic, key, error, envelope);
+        return;
       }
       this.logFailure(topic, envelope, error);
       await this.scheduleRetry(topic, key, envelope, error);
@@ -210,18 +198,18 @@ export class BillingEventProcessor {
   private async dispatch(envelope: EventEnvelope): Promise<void> {
     if (envelope.eventType === 'OrcamentoCalculado') {
       if (envelope.eventVersion !== 1)
-        throw new Error('Versão não suportada de OrcamentoCalculado.');
+        throw new InvalidMessageError('Versão não suportada de OrcamentoCalculado.');
       if (!isOrcamentoCalculado(envelope.data)) {
-        throw new DomainException('Payload inválido de OrcamentoCalculado.');
+        throw new InvalidMessageError('Payload inválido de OrcamentoCalculado.');
       }
       await this.orcamento.handle(envelope.data);
       return;
     }
     if (envelope.eventType === 'EtapaDaSagaFalhou') {
       if (envelope.eventVersion !== 1)
-        throw new Error('Versão não suportada de EtapaDaSagaFalhou.');
+        throw new InvalidMessageError('Versão não suportada de EtapaDaSagaFalhou.');
       if (!isEtapaDaSagaFalhou(envelope.data)) {
-        throw new Error('Payload inválido de EtapaDaSagaFalhou.');
+        throw new InvalidMessageError('Payload inválido de EtapaDaSagaFalhou.');
       }
       await this.compensar.execute({
         ordemServicoId: envelope.data.ordemServicoId,
@@ -243,15 +231,52 @@ export class BillingEventProcessor {
       envelope.correlationId !== ordemServicoId ||
       key !== ordemServicoId
     ) {
-      throw new Error('ordemServicoId, correlationId e chave Kafka devem ser iguais.');
+      throw new InvalidMessageError(
+        'ordemServicoId, correlationId e chave Kafka devem ser iguais.'
+      );
     }
   }
 
-  private async processDeadLetter(envelope: EventEnvelope): Promise<void> {
-    if (envelope.eventType === 'EtapaDaSagaFalhou') return;
-    if (envelope.eventType !== 'OrcamentoCalculado') return;
+  private async processDeadLetter(envelope: EventEnvelope): Promise<boolean> {
+    if (envelope.eventType === 'EtapaDaSagaFalhou') {
+      if (envelope.eventVersion !== 1 || !isEtapaDaSagaFalhou(envelope.data)) {
+        this.logger.error(
+          { eventId: envelope.eventId, eventType: envelope.eventType },
+          'Mensagem inválida retida na DLT; ignorada sem republicação'
+        );
+        return false;
+      }
+      this.logger.error(
+        {
+          eventId: envelope.eventId,
+          correlationId: envelope.correlationId,
+          ordemServicoId: envelope.data.ordemServicoId ?? null,
+          etapa: envelope.data.etapa ?? null,
+          lastError: errorText(envelope.lastError ?? 'Falha na compensação após três tentativas.'),
+        },
+        'DLT de falha da Saga; compensação pendente — republicar o evento após corrigir a causa'
+      );
+      return false;
+    }
+    if (
+      envelope.eventType !== 'OrcamentoCalculado' ||
+      envelope.eventVersion !== 1 ||
+      !isOrcamentoCalculado(envelope.data)
+    ) {
+      this.logger.error(
+        { eventId: envelope.eventId, eventType: envelope.eventType },
+        'Mensagem inválida retida na DLT; ignorada sem republicação'
+      );
+      return false;
+    }
     const ordemServicoId = envelope.data.ordemServicoId;
-    if (typeof ordemServicoId !== 'string') return;
+    if (typeof ordemServicoId !== 'string') {
+      this.logger.error(
+        { eventId: envelope.eventId, eventType: envelope.eventType },
+        'OrcamentoCalculado inválido na DLT; ignorado sem republicação'
+      );
+      return false;
+    }
     await this.publicador.publicar(
       new EtapaDaSagaFalhou(
         ordemServicoId,
@@ -261,6 +286,48 @@ export class BillingEventProcessor {
         envelope.lastError ?? 'Falha técnica após três tentativas.'
       )
     );
+    return true;
+  }
+
+  private async handleInvalidMessage(
+    topic: string,
+    key: string | null,
+    error: unknown,
+    envelope?: EventEnvelope
+  ): Promise<void> {
+    if (topic === BILLING_DLT_TOPIC) {
+      this.logger.error(
+        { eventId: envelope?.eventId, topic, key, error: errorText(error) },
+        'Mensagem inválida retida na DLT; ignorada sem republicação'
+      );
+      return;
+    }
+    const eventId = randomUUID();
+    const now = this.now().toISOString();
+    await this.publicador.publicarEnvelope(BILLING_DLT_TOPIC, key, {
+      eventId,
+      eventType: 'InvalidEnvelope',
+      eventVersion: 1,
+      occurredAt: now,
+      correlationId: key ?? eventId,
+      producer: 'billing-service',
+      data: {},
+      retry: { attempt: MAX_TENTATIVAS, firstFailedAt: now, notBefore: now },
+      lastError: errorText(error),
+    });
+    this.logger.error(
+      { topic, key, eventId, error: errorText(error) },
+      'Envelope inválido enviado à DLT'
+    );
+  }
+
+  private async waitForRetry(notBefore: string, heartbeat: Heartbeat): Promise<void> {
+    let remaining = Date.parse(notBefore) - this.now().getTime();
+    while (Number.isFinite(remaining) && remaining > 0) {
+      await this.wait(Math.min(remaining, HEARTBEAT_INTERVAL_MS));
+      await heartbeat();
+      remaining = Date.parse(notBefore) - this.now().getTime();
+    }
   }
 
   private logConsumed(topic: string, envelope: EventEnvelope): void {
@@ -333,7 +400,7 @@ export class KafkaConsumidorEventos implements OnModuleInit, OnModuleDestroy {
   ) {
     this.kafka = new Kafka(billingKafkaConfig());
     this.consumer = this.kafka.consumer({
-      groupId: process.env.KAFKA_CONSUMER_GROUP || BILLING_CONSUMER_GROUP,
+      groupId: BILLING_CONSUMER_GROUP,
     });
     this.processor = new BillingEventProcessor(orcamento, compensar, publicador);
   }
@@ -347,8 +414,13 @@ export class KafkaConsumidorEventos implements OnModuleInit, OnModuleDestroy {
     }
     await this.consumer.run({
       // State and retry/DLT publishes finish before eachMessage resolves, so KafkaJS commits afterward.
-      eachMessage: async ({ topic, message }) =>
-        this.processor.process(topic, message.key?.toString() ?? null, message.value),
+      eachMessage: async (payload) =>
+        this.processor.process(
+          payload.topic,
+          payload.message.key?.toString() ?? null,
+          payload.message.value,
+          () => payload.heartbeat()
+        ),
     });
   }
 
