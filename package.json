@@ -39,6 +39,7 @@
     "kafkajs": "^2.2.4",
     "mercadopago": "3.6.1",
     "nestjs-pino": "^4.6.1",
+    "newrelic": "14.4.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pino": "^10.3.1",

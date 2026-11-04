@@ -6,6 +6,7 @@ import { CompensarFalhaSagaHandler } from '../../application/event-handlers/comp
 import { GerarOrcamentoHandler } from '../../application/event-handlers/gerar-orcamento.handler';
 import type { OrcamentoCalculado } from '../../domain/events/orcamento.events';
 import { EtapaDaSagaFalhou } from '../../domain/events/etapa-da-saga-falhou.event';
+import { recordSagaStep } from '../../../../shared/infrastructure/observability/saga-step';
 import { KafkaPublicadorEventos, billingKafkaConfig } from './kafka-publicador-eventos';
 
 export const BILLING_CONSUMER_GROUP = 'billing-consumer';
@@ -202,7 +203,9 @@ export class BillingEventProcessor {
       if (!isOrcamentoCalculado(envelope.data)) {
         throw new InvalidMessageError('Payload inválido de OrcamentoCalculado.');
       }
+      const startedAt = Date.now();
       await this.orcamento.handle(envelope.data);
+      recordSagaStep(envelope.data.ordemServicoId, 'orcamento', 'SUCCESS', startedAt);
       return;
     }
     if (envelope.eventType === 'EtapaDaSagaFalhou') {
@@ -211,10 +214,12 @@ export class BillingEventProcessor {
       if (!isEtapaDaSagaFalhou(envelope.data)) {
         throw new InvalidMessageError('Payload inválido de EtapaDaSagaFalhou.');
       }
+      const startedAt = Date.now();
       await this.compensar.execute({
         ordemServicoId: envelope.data.ordemServicoId,
         etapa: envelope.data.etapa,
       });
+      recordSagaStep(envelope.data.ordemServicoId, 'compensacao', 'SUCCESS', startedAt);
       return;
     }
     this.logger.debug(
@@ -256,6 +261,7 @@ export class BillingEventProcessor {
         },
         'DLT de falha da Saga; compensação pendente — republicar o evento após corrigir a causa'
       );
+      recordSagaStep(envelope.data.ordemServicoId, 'compensacao', 'FAILED', Date.now());
       return false;
     }
     if (
@@ -286,6 +292,7 @@ export class BillingEventProcessor {
         envelope.lastError ?? 'Falha técnica após três tentativas.'
       )
     );
+    recordSagaStep(ordemServicoId, 'orcamento', 'FAILED', Date.now());
     return true;
   }
 

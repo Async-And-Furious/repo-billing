@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { DomainException } from '../src/shared/domain/exceptions/domain.exception';
+jest.mock('newrelic', () => ({ recordCustomEvent: jest.fn() }));
+const { recordCustomEvent } = jest.requireMock<{ recordCustomEvent: jest.Mock }>('newrelic');
 import {
   BILLING_DLT_TOPIC,
   BILLING_RETRY_TOPIC,
@@ -60,10 +62,25 @@ describe('BillingEventProcessor', () => {
 
   it('dispatches OrcamentoCalculado to the state-idempotent budget handler', async () => {
     const { processor, orcamento } = setup();
+    recordCustomEvent.mockClear();
 
     await processor.process('os.eventos.v1', 'os-1', message(envelope()));
 
     expect(orcamento.handle).toHaveBeenCalledWith(envelope().data);
+    expect(recordCustomEvent).toHaveBeenCalledWith('SagaStep', {
+      ordemServicoId: 'os-1',
+      service: 'billing-service',
+      step: 'orcamento',
+      outcome: 'SUCCESS',
+      durationMs: expect.any(Number),
+    });
+    expect(Object.keys(recordCustomEvent.mock.calls[0][1])).toEqual([
+      'ordemServicoId',
+      'service',
+      'step',
+      'outcome',
+      'durationMs',
+    ]);
   });
 
   it('re-delivers messages to the business state guard without a processed-events table', async () => {
@@ -196,6 +213,13 @@ describe('BillingEventProcessor', () => {
       expect.objectContaining({ ordemServicoId: 'os-1', etapa: 'orcamento' }),
       expect.stringContaining('compensação pendente')
     );
+    expect(recordCustomEvent).toHaveBeenCalledWith('SagaStep', {
+      ordemServicoId: 'os-1',
+      service: 'billing-service',
+      step: 'compensacao',
+      outcome: 'FAILED',
+      durationMs: expect.any(Number),
+    });
     expect(successLog).not.toHaveBeenCalled();
     errorLog.mockRestore();
     successLog.mockRestore();
@@ -236,6 +260,7 @@ describe('BillingEventProcessor', () => {
 
   it('heartbeats during backoff and waits before handling a retry', async () => {
     const { processor, wait } = setup();
+    recordCustomEvent.mockClear();
     const heartbeat = jest.fn().mockResolvedValue(undefined);
     const retryEnvelope = envelope({
       retry: {
@@ -247,6 +272,13 @@ describe('BillingEventProcessor', () => {
     await processor.process(BILLING_RETRY_TOPIC, 'os-1', message(retryEnvelope), heartbeat);
     expect(wait.mock.calls.map(([ms]) => ms)).toEqual([10_000, 10_000, 10_000]);
     expect(heartbeat).toHaveBeenCalledTimes(3);
+    expect(recordCustomEvent).toHaveBeenCalledWith('SagaStep', {
+      ordemServicoId: 'os-1',
+      service: 'billing-service',
+      step: 'orcamento',
+      outcome: 'SUCCESS',
+      durationMs: expect.any(Number),
+    });
   });
 
   it('does not resolve a failed DLT publish, leaving the source offset uncommitted', async () => {
