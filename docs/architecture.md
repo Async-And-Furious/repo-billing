@@ -87,7 +87,12 @@ O Billing não usa DocumentDB/NoSQL. As migrations são versionadas em
 
 ## Execução local
 
-Requisitos: Node.js 22+, pnpm e Docker. Configure `.env` a partir de
+Requisitos: Node.js 22+, pnpm, Docker e um broker Kafka acessível em
+`KAFKA_BROKERS` (padrão `localhost:9092`). O compose de dependências sobe só o
+PostgreSQL; fora de `NODE_ENV=test`, o consumidor conecta ao broker no
+bootstrap e, sem broker, a aplicação encerra com erro. Suba um broker local
+separadamente (por exemplo, um container Kafka em modo KRaft) antes de
+`pnpm start`. Configure `.env` a partir de
 `.env.example`; ajuste a URL local do PostgreSQL conforme o compose. Para
 receber webhooks locais, configure credenciais de teste e uma URL pública de
 túnel em `MP_NOTIFICATION_URL`.
