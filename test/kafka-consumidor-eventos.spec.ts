@@ -63,16 +63,17 @@ describe('BillingEventProcessor', () => {
   it('dispatches OrcamentoCalculado to the state-idempotent budget handler', async () => {
     const { processor, orcamento } = setup();
     recordCustomEvent.mockClear();
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(1065);
 
     await processor.process('os.eventos.v1', 'os-1', message(envelope()));
 
     expect(orcamento.handle).toHaveBeenCalledWith(envelope().data);
     expect(recordCustomEvent).toHaveBeenCalledWith('SagaStep', {
       ordemServicoId: 'os-1',
-      service: 'billing-service',
+      service: 'billing',
       step: 'orcamento',
       outcome: 'SUCCESS',
-      durationMs: expect.any(Number),
+      durationMs: 65,
     });
     expect(Object.keys(recordCustomEvent.mock.calls[0][1])).toEqual([
       'ordemServicoId',
@@ -81,6 +82,7 @@ describe('BillingEventProcessor', () => {
       'outcome',
       'durationMs',
     ]);
+    nowSpy.mockRestore();
   });
 
   it('re-delivers messages to the business state guard without a processed-events table', async () => {
@@ -215,7 +217,7 @@ describe('BillingEventProcessor', () => {
     );
     expect(recordCustomEvent).toHaveBeenCalledWith('SagaStep', {
       ordemServicoId: 'os-1',
-      service: 'billing-service',
+      service: 'billing',
       step: 'compensacao',
       outcome: 'FAILED',
       durationMs: expect.any(Number),
@@ -233,6 +235,18 @@ describe('BillingEventProcessor', () => {
     expect(failure).toMatchObject({ eventType: 'InvalidEnvelope', retry: { attempt: 3 } });
     expect(failure).not.toHaveProperty('rawPayload');
     expect(errorLog).toHaveBeenCalled();
+    errorLog.mockRestore();
+  });
+
+  it('sanitizes JSON syntax errors before logging and publishing to DLT', async () => {
+    const { processor, publicador } = setup();
+    const errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    const marker = 'DEMO_KEY';
+    await processor.process('os.eventos.v1', 'os-1', Buffer.from(`{"secret":"${marker}",}`));
+    const [, , failure] = publicador.publicarEnvelope.mock.calls[0];
+    expect(failure.lastError).toBe('JSON inválido.');
+    expect(JSON.stringify(failure)).not.toContain(marker);
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain(marker);
     errorLog.mockRestore();
   });
 
@@ -274,7 +288,7 @@ describe('BillingEventProcessor', () => {
     expect(heartbeat).toHaveBeenCalledTimes(3);
     expect(recordCustomEvent).toHaveBeenCalledWith('SagaStep', {
       ordemServicoId: 'os-1',
-      service: 'billing-service',
+      service: 'billing',
       step: 'orcamento',
       outcome: 'SUCCESS',
       durationMs: expect.any(Number),

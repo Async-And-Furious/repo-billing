@@ -274,6 +274,28 @@ describe('AprovarOrcamentoUseCase', () => {
       expect(publicador.publicar).not.toHaveBeenCalled();
       expect(orcamentoRepository.desfazerAprovacao).not.toHaveBeenCalled();
     });
+
+    it('não devolve link quando a Saga fecha orçamento e pagamento entre leitura e recuperação', async () => {
+      const leituraLiberada: { resolve?: (value: Pagamento | null) => void } = {};
+      orcamentoRepository.findByOrdemServicoId
+        .mockResolvedValueOnce(orcamento(StatusOrcamento.APPROVED))
+        .mockResolvedValueOnce(orcamento(StatusOrcamento.REJECTED));
+      pagamentoRepository.findByOrdemServicoId.mockImplementationOnce(
+        () => new Promise((resolve) => (leituraLiberada.resolve = resolve))
+      );
+
+      const requisicao = useCase.execute(ordemServicoId);
+      const resultadoRejeitado = expect(requisicao).rejects.toThrow(ConflitoException);
+      await new Promise((resolve) => setImmediate(resolve));
+      banco.status = StatusOrcamento.REJECTED;
+      const pagamentoCancelado = pagamentoExistente(cobranca.linkPagamento);
+      pagamentoCancelado.cancelar();
+      leituraLiberada.resolve?.(pagamentoCancelado);
+
+      await resultadoRejeitado;
+      expect(gateway.criarCobranca).not.toHaveBeenCalled();
+      expect(publicador.publicar).not.toHaveBeenCalled();
+    });
   });
 
   it('orçamento APPROVED sem cobrança gravada vira conflito', async () => {

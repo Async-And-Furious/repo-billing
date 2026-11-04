@@ -15,7 +15,7 @@ export const recordSagaStep = (
   try {
     recordCustomEvent('SagaStep', {
       ordemServicoId,
-      service: 'billing-service',
+      service: 'billing',
       step,
       outcome,
       durationMs: Date.now() - startedAt,

@@ -54,7 +54,12 @@ class InvalidMessageError extends Error {}
 
 const parseEnvelope = (value: Buffer | null): EventEnvelope => {
   if (!value) throw new InvalidMessageError('Mensagem Kafka sem payload.');
-  const parsed: unknown = JSON.parse(value.toString());
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value.toString());
+  } catch {
+    throw new InvalidMessageError('JSON inválido.');
+  }
   if (
     !isRecord(parsed) ||
     typeof parsed.eventId !== 'string' ||

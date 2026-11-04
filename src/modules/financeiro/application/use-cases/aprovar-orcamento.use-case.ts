@@ -61,9 +61,13 @@ export class AprovarOrcamentoUseCase {
   }
 
   private async linkExistente(ordemServicoId: string): Promise<AprovacaoOrcamento> {
+    const orcamento = await this.orcamentoRepository.findByOrdemServicoId(ordemServicoId);
+    if (!orcamento?.estaAprovado()) {
+      throw new ConflitoException(`O orçamento da OS ${ordemServicoId} não está mais aprovado.`);
+    }
     const pagamento = await this.pagamentoRepository.findByOrdemServicoId(ordemServicoId);
     const linkPagamento = pagamento?.getLinkPagamento();
-    if (!linkPagamento) {
+    if (!linkPagamento || !pagamento?.estaPendente()) {
       throw new ConflitoException(
         `O orçamento da OS ${ordemServicoId} já foi aprovado e o link de pagamento ainda não está disponível. Tente novamente em instantes.`
       );
