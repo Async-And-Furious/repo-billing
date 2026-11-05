@@ -1,6 +1,6 @@
 import { ConflitoException } from '../../../../shared/domain/exceptions/conflito.exception';
 import { EntityNotFoundException } from '../../../../shared/domain/exceptions/entity-not-found.exception';
-import { Pagamento, type Cobranca } from '../../domain/entities/pagamento.entity';
+import { Pagamento, StatusPagamento, type Cobranca } from '../../domain/entities/pagamento.entity';
 import { OrcamentoAprovado } from '../../domain/events/orcamento.events';
 import type {
   IGatewayPagamento,
@@ -67,7 +67,10 @@ export class AprovarOrcamentoUseCase {
     }
     const pagamento = await this.pagamentoRepository.findByOrdemServicoId(ordemServicoId);
     const linkPagamento = pagamento?.getLinkPagamento();
-    if (!linkPagamento || !pagamento?.estaPendente()) {
+    if (
+      !linkPagamento ||
+      !(pagamento?.estaPendente() || pagamento?.getStatus() === StatusPagamento.CONFIRMADO)
+    ) {
       throw new ConflitoException(
         `O orçamento da OS ${ordemServicoId} já foi aprovado e o link de pagamento ainda não está disponível. Tente novamente em instantes.`
       );

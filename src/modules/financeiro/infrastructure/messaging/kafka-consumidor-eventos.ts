@@ -266,7 +266,15 @@ export class BillingEventProcessor {
         },
         'DLT de falha da Saga; compensação pendente — republicar o evento após corrigir a causa'
       );
-      recordSagaStep(envelope.data.ordemServicoId, 'compensacao', 'FAILED', Date.now());
+      // FAILED measures elapsed time since the first failure, including retries and DLT wait.
+      if (envelope.retry) {
+        recordSagaStep(
+          envelope.data.ordemServicoId,
+          'compensacao',
+          'FAILED',
+          Date.parse(envelope.retry.firstFailedAt)
+        );
+      }
       return false;
     }
     if (
@@ -297,7 +305,14 @@ export class BillingEventProcessor {
         envelope.lastError ?? 'Falha técnica após três tentativas.'
       )
     );
-    recordSagaStep(ordemServicoId, 'orcamento', 'FAILED', Date.now());
+    if (envelope.retry) {
+      recordSagaStep(
+        ordemServicoId,
+        'orcamento',
+        'FAILED',
+        Date.parse(envelope.retry.firstFailedAt)
+      );
+    }
     return true;
   }
 

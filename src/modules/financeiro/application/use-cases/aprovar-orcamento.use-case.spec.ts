@@ -154,6 +154,34 @@ describe('AprovarOrcamentoUseCase', () => {
     expect(publicador.publicar).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [StatusPagamento.CONFIRMADO, true],
+    [StatusPagamento.RECUSADO, false],
+    [StatusPagamento.CANCELADO, false],
+    [StatusPagamento.ESTORNADO, false],
+  ])(
+    'reaprovação com pagamento %s preserva idempotência somente quando válido',
+    async (status, valido) => {
+      orcamentoRepository.findByOrdemServicoId.mockResolvedValue(
+        orcamento(StatusOrcamento.APPROVED)
+      );
+      const pagamento = pagamentoExistente('https://mp/pref-antiga');
+      if (status === StatusPagamento.CONFIRMADO || status === StatusPagamento.ESTORNADO)
+        pagamento.confirmar('p1');
+      if (status === StatusPagamento.RECUSADO) pagamento.recusar('p1');
+      if (status === StatusPagamento.CANCELADO) pagamento.cancelar();
+      if (status === StatusPagamento.ESTORNADO) pagamento.estornar();
+      pagamentoRepository.findByOrdemServicoId.mockResolvedValue(pagamento);
+      if (valido)
+        await expect(useCase.execute(ordemServicoId)).resolves.toEqual({
+          linkPagamento: 'https://mp/pref-antiga',
+        });
+      else await expect(useCase.execute(ordemServicoId)).rejects.toThrow(ConflitoException);
+      expect(gateway.criarCobranca).not.toHaveBeenCalled();
+      expect(publicador.publicar).not.toHaveBeenCalled();
+    }
+  );
+
   it('aprovar orçamento REJECTED é erro de domínio, sem reserva nem cobrança', async () => {
     orcamentoRepository.findByOrdemServicoId.mockResolvedValue(orcamento(StatusOrcamento.REJECTED));
 

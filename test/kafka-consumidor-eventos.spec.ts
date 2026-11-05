@@ -85,6 +85,56 @@ describe('BillingEventProcessor', () => {
     nowSpy.mockRestore();
   });
 
+  it.each(['OrcamentoCalculado', 'EtapaDaSagaFalhou'])(
+    'measures FAILED %s from the first failure through DLT processing',
+    async (eventType) => {
+      const { processor } = setup();
+      const firstFailedAt = '2026-11-01T11:59:00.000Z';
+      const data =
+        eventType === 'OrcamentoCalculado'
+          ? envelope().data
+          : {
+              ordemServicoId: 'os-1',
+              servicoOrigem: 'os-service',
+              eventTypeOriginal: 'PagamentoConfirmado',
+              etapa: 'inicio-execucao',
+              motivo: 'failure',
+            };
+      recordCustomEvent.mockClear();
+      const spy = jest.spyOn(Date, 'now').mockReturnValue(Date.parse(firstFailedAt) + 65000);
+      try {
+        await processor.process(
+          BILLING_DLT_TOPIC,
+          'os-1',
+          message(
+            envelope({
+              eventType,
+              data,
+              retry: { attempt: 3, firstFailedAt, notBefore: now.toISOString() },
+            })
+          )
+        );
+        expect(recordCustomEvent).toHaveBeenCalledWith(
+          'SagaStep',
+          expect.objectContaining({
+            outcome: 'FAILED',
+            step: eventType === 'OrcamentoCalculado' ? 'orcamento' : 'compensacao',
+            durationMs: 65000,
+          })
+        );
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  );
+
+  it('does not invent a FAILED duration when DLT retry metadata is absent', async () => {
+    const { processor } = setup();
+    recordCustomEvent.mockClear();
+    await processor.process(BILLING_DLT_TOPIC, 'os-1', message(envelope()));
+    expect(recordCustomEvent).not.toHaveBeenCalled();
+  });
+
   it('re-delivers messages to the business state guard without a processed-events table', async () => {
     const { processor, orcamento } = setup();
     await processor.process('os.eventos.v1', 'os-1', message(envelope()));
@@ -199,6 +249,7 @@ describe('BillingEventProcessor', () => {
       message(
         envelope({
           eventType: 'EtapaDaSagaFalhou',
+          retry: { attempt: 3, firstFailedAt: now.toISOString(), notBefore: now.toISOString() },
           data: {
             ordemServicoId: 'os-1',
             servicoOrigem: 'billing-service',
