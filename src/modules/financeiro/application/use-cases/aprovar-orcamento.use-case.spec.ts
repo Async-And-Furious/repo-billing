@@ -63,10 +63,13 @@ describe('AprovarOrcamentoUseCase', () => {
       aprovarComPagamento: jest.fn().mockResolvedValue(true),
       desfazerAprovacao: jest.fn().mockResolvedValue(undefined),
       recusarSePendente: jest.fn(),
+      encerrarSeAberto: jest.fn(),
     };
     pagamentoRepository = {
       findByOrdemServicoId: jest.fn().mockResolvedValue(null),
       salvarCobranca: jest.fn().mockResolvedValue(undefined),
+      cancelarSePendente: jest.fn(),
+      estornarSeConfirmado: jest.fn(),
       salvarComNotificacao: jest.fn(),
       jaRecebida: jest.fn(),
       registrar: jest.fn(),
@@ -150,6 +153,34 @@ describe('AprovarOrcamentoUseCase', () => {
     expect(orcamentoRepository.aprovarComPagamento).not.toHaveBeenCalled();
     expect(publicador.publicar).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [StatusPagamento.CONFIRMADO, true],
+    [StatusPagamento.RECUSADO, false],
+    [StatusPagamento.CANCELADO, false],
+    [StatusPagamento.ESTORNADO, false],
+  ])(
+    'reaprovação com pagamento %s preserva idempotência somente quando válido',
+    async (status, valido) => {
+      orcamentoRepository.findByOrdemServicoId.mockResolvedValue(
+        orcamento(StatusOrcamento.APPROVED)
+      );
+      const pagamento = pagamentoExistente('https://mp/pref-antiga');
+      if (status === StatusPagamento.CONFIRMADO || status === StatusPagamento.ESTORNADO)
+        pagamento.confirmar('p1');
+      if (status === StatusPagamento.RECUSADO) pagamento.recusar('p1');
+      if (status === StatusPagamento.CANCELADO) pagamento.cancelar();
+      if (status === StatusPagamento.ESTORNADO) pagamento.estornar();
+      pagamentoRepository.findByOrdemServicoId.mockResolvedValue(pagamento);
+      if (valido)
+        await expect(useCase.execute(ordemServicoId)).resolves.toEqual({
+          linkPagamento: 'https://mp/pref-antiga',
+        });
+      else await expect(useCase.execute(ordemServicoId)).rejects.toThrow(ConflitoException);
+      expect(gateway.criarCobranca).not.toHaveBeenCalled();
+      expect(publicador.publicar).not.toHaveBeenCalled();
+    }
+  );
 
   it('aprovar orçamento REJECTED é erro de domínio, sem reserva nem cobrança', async () => {
     orcamentoRepository.findByOrdemServicoId.mockResolvedValue(orcamento(StatusOrcamento.REJECTED));
@@ -254,6 +285,44 @@ describe('AprovarOrcamentoUseCase', () => {
         linkPagamento: 'https://mp/pref-1',
       });
       expect(gateway.criarCobranca).toHaveBeenCalledTimes(1);
+    });
+
+    it('falha de Saga fecha a reserva durante o gateway e impede publicação tardia do link', async () => {
+      const vencedora = useCase.execute(ordemServicoId);
+      await aguardarChamadaMp();
+
+      banco.status = StatusOrcamento.REJECTED;
+      pagamentoRepository.salvarCobranca.mockRejectedValue(
+        new ConflitoException('O pagamento da OS foi cancelado.')
+      );
+      resolverMp(cobranca);
+
+      await expect(vencedora).rejects.toThrow(ConflitoException);
+      expect(banco.status).toBe(StatusOrcamento.REJECTED);
+      expect(publicador.publicar).not.toHaveBeenCalled();
+      expect(orcamentoRepository.desfazerAprovacao).not.toHaveBeenCalled();
+    });
+
+    it('não devolve link quando a Saga fecha orçamento e pagamento entre leitura e recuperação', async () => {
+      const leituraLiberada: { resolve?: (value: Pagamento | null) => void } = {};
+      orcamentoRepository.findByOrdemServicoId
+        .mockResolvedValueOnce(orcamento(StatusOrcamento.APPROVED))
+        .mockResolvedValueOnce(orcamento(StatusOrcamento.REJECTED));
+      pagamentoRepository.findByOrdemServicoId.mockImplementationOnce(
+        () => new Promise((resolve) => (leituraLiberada.resolve = resolve))
+      );
+
+      const requisicao = useCase.execute(ordemServicoId);
+      const resultadoRejeitado = expect(requisicao).rejects.toThrow(ConflitoException);
+      await new Promise((resolve) => setImmediate(resolve));
+      banco.status = StatusOrcamento.REJECTED;
+      const pagamentoCancelado = pagamentoExistente(cobranca.linkPagamento);
+      pagamentoCancelado.cancelar();
+      leituraLiberada.resolve?.(pagamentoCancelado);
+
+      await resultadoRejeitado;
+      expect(gateway.criarCobranca).not.toHaveBeenCalled();
+      expect(publicador.publicar).not.toHaveBeenCalled();
     });
   });
 

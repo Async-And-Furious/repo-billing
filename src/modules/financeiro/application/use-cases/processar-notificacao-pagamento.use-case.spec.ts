@@ -47,6 +47,8 @@ describe('ProcessarNotificacaoPagamentoUseCase', () => {
         .fn()
         .mockResolvedValue(pagamento(StatusPagamento.AGUARDANDO_PAGAMENTO)),
       salvarCobranca: jest.fn(),
+      cancelarSePendente: jest.fn(),
+      estornarSeConfirmado: jest.fn(),
       salvarComNotificacao: jest.fn().mockResolvedValue(true),
       jaRecebida: jest.fn().mockResolvedValue(false),
       registrar: jest.fn().mockResolvedValue(true),
