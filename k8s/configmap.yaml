@@ -14,3 +14,14 @@ data:
   MP_NOTIFICATION_URL: ${mp_notification_url}
   # Mesmo prazo do detector de OS parada do OS Service (padrao 48 h; na demo, minutos).
   MP_PREFERENCE_EXPIRACAO_HORAS: '48'
+  # New Relic (#343): configuração só por ambiente, como no Execução. A license key fica no billing-secret.
+  NEW_RELIC_NO_CONFIG_FILE: 'true'
+  NEW_RELIC_APP_NAME: 'af-billing-hml'
+  NEW_RELIC_DISTRIBUTED_TRACING_ENABLED: 'true'
+  NEW_RELIC_APPLICATION_LOGGING_ENABLED: 'true'
+  NEW_RELIC_APPLICATION_LOGGING_LOCAL_DECORATING_ENABLED: 'true'
+  NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED: 'false'
+  NEW_RELIC_LOG: 'stdout'
+  # NÃO ligar NEW_RELIC_FEATURE_FLAG_KAFKAJS_INSTRUMENTATION: no newrelic 14.x o wrapper do eachMessage
+  # não devolve a promise do handler (client-constructor.js), e o kafkajs confirma o offset antes do
+  # processamento. O trace pelo broker deve propagar os headers no código (#344).
