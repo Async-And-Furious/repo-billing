@@ -283,8 +283,8 @@ O namespace `billing` e o ECR `tc3-billing-hml` são criados pelo `repo-k8s-infr
 ## Observabilidade
 
 - **APM:** agente `newrelic` carregado antes dos demais módulos (`src/main.ts`, a partir do #326), configurado só por ambiente, sem `newrelic.js` e sem OpenTelemetry. Em HML o app se chama `af-billing-hml`, ao lado de `async-furious-project-hml` (OS) e `af-execucao-hml`.
-- **Variáveis:** no `billing-config`, `NEW_RELIC_NO_CONFIG_FILE`, `NEW_RELIC_APP_NAME`, `NEW_RELIC_DISTRIBUTED_TRACING_ENABLED`, as de log (decoração local ligada e forwarding desligado, porque o Fluent Bit do cluster já envia os logs) e `NEW_RELIC_FEATURE_FLAG_KAFKAJS_INSTRUMENTATION=true`. A `NEW_RELIC_LICENSE_KEY` fica no `billing-secret`, vinda do secret do environment `hml`.
-- **Kafka:** na versão 14.x do agente, a instrumentação do `kafkajs` fica atrás dessa feature flag, desligada por padrão. Com ela ligada, o agente propaga o trace pelos headers das mensagens, e um trace iniciado no OS continua no consumo do Billing.
+- **Variáveis:** no `billing-config`, `NEW_RELIC_NO_CONFIG_FILE`, `NEW_RELIC_APP_NAME`, `NEW_RELIC_DISTRIBUTED_TRACING_ENABLED`, as de log (decoração local ligada e forwarding desligado, porque o Fluent Bit do cluster já envia os logs). A `NEW_RELIC_LICENSE_KEY` fica no `billing-secret`, vinda do secret do environment `hml`.
+- **Kafka:** a feature flag `kafkajs_instrumentation` do agente fica desligada de propósito. Na versão 14.x, o wrapper do `eachMessage` não devolve a promise do handler, e o kafkajs confirmaria o offset antes de o estado e o retry/DLT serem gravados. O trace pelo broker deve propagar os headers no código (#344).
 - **Correlação:** os eventos carregam `correlationId` igual ao `ordemServicoId`, o que permite buscar nos logs a sequência de uma OS.
 - **Dashboard:** `tc3-observability-hml` no New Relic, mantido como código no `repo-k8s-infra`.
 
