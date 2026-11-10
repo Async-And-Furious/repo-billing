@@ -33,6 +33,11 @@ jobs:
       - name: Gerar cliente Prisma
         run: pnpm exec prisma generate
 
+      - name: Gerar e verificar contrato OpenAPI versionado
+        run: |
+          pnpm openapi:export
+          git diff --exit-code -- docs/openapi.json
+
       - name: Lint
         run: pnpm exec eslint "{src,test}/**/*.ts"
 
