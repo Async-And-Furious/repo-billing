@@ -2,8 +2,9 @@ import type { Orcamento } from '../entities/orcamento.entity';
 import type { Cobranca, Pagamento, StatusPagamento } from '../entities/pagamento.entity';
 import type { EventoOrcamento } from '../events/orcamento.events';
 import type { EventoPagamento } from '../events/pagamento.events';
+import type { EtapaDaSagaFalhou } from '../events/etapa-da-saga-falhou.event';
 
-export type EventoBilling = EventoOrcamento | EventoPagamento;
+export type EventoBilling = EventoOrcamento | EventoPagamento | EtapaDaSagaFalhou;
 
 // Pagamento como o Mercado Pago o reporta na reconsulta GET /v1/payments/{id}.
 export interface PagamentoExterno {
@@ -38,12 +39,16 @@ export interface IOrcamentoRepository {
   desfazerAprovacao(orcamento: Orcamento, pagamento: Pagamento): Promise<void>;
   // Transição atômica PENDING → REJECTED; false se outra transição chegou antes.
   recusarSePendente(orcamento: Orcamento): Promise<boolean>;
+  // Fecha atomicamente orçamento PENDING ou APPROVED; aprovação e falha concorrem na mesma linha.
+  encerrarSeAberto(ordemServicoId: string): Promise<boolean>;
 }
 
 export interface IPagamentoRepository {
   findByOrdemServicoId(ordemServicoId: string): Promise<Pagamento | null>;
   // Grava a cobrança (preference e link) de um Pagamento reservado. Só a aprovação que ganhou a reserva chega aqui.
   salvarCobranca(pagamento: Pagamento): Promise<void>;
+  cancelarSePendente(ordemServicoId: string): Promise<boolean>;
+  estornarSeConfirmado(ordemServicoId: string): Promise<boolean>;
   // Numa única transação: grava webhook_recebido e persiste a transição do Pagamento (status e id
   // externo), condicionada a `statusAnterior`. False, sem efeito algum, se a notificação já foi
   // vista (unique em webhook_recebido ou no id externo) ou se o Pagamento já mudou de status.

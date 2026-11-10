@@ -1,0 +1,17 @@
+# PR #3 review fixes — issue #326
+
+Scope is restricted to `repo-billing` PR #3. Live head was `8d9dfc9101460d61e921179ea574164c238a15aa`; live base `feat/I-327_PipelineDeployIndependenteBilling` was `ed48c31c46581757f2cb56013ae55f3f975cbdf6` and is already an ancestor of the head. No rebase/merge is needed.
+
+Review sources: https://github.com/Async-And-Furious/repo-billing/pull/3#issuecomment-6584505798 and review comments from `jonathanjf` / `vrbb` in the PR preflight artifact. Issue contract: https://github.com/Async-And-Furious/async-furious-project/issues/326; `SagaStep` field contract: https://github.com/Async-And-Furious/async-furious-project/issues/345.
+
+| Review/contract item | Required behavior | Test / code location |
+|---|---|---|
+| Inline retry exceeds KafkaJS session timeout | Heartbeat every 10s during retry wait; offset advances only when processing/retry/DLT publish returns successfully | RED/GREEN in `test/kafka-consumidor-eventos.spec.ts`; consumer `eachMessage` passes KafkaJS heartbeat |
+| Invalid poison envelopes | Send sanitized marker to DLT once, log and ignore DLT poison; failed DLT send propagates, preserving source offset | `test/kafka-consumidor-eventos.spec.ts`; consumer |
+| Exhausted compensation on DLT | Log explicit pending compensation with safe identifiers/error, no success log or event; replay original event through normal producer topic after correcting cause (do not only reset DLT offset) | `test/kafka-consumidor-eventos.spec.ts`; README operations note |
+| New Relic SagaStep | Emits `recordCustomEvent('SagaStep', { ordemServicoId, service: 'billing', step, outcome, durationMs })` using the existing Phase 4 agent version. Duration is measured in milliseconds; no business payload is included. | Implemented; `test/kafka-consumidor-eventos.spec.ts` mocks New Relic and asserts exact duration/fields; no real ingestion |
+| Five business events vs failure event | Docs distinguish the five business event types from additional `EtapaDaSagaFalhou`; consumer group fixed to `billing-consumer` | README, `.env.example`, `k8s/configmap.yaml`, consumer |
+| Compensation replay | Refund succeeds, DB finalization fails, replay uses same Mercado Pago key | Existing red/green test `test/compensar-falha-saga.spec.ts`; handler/gateway |
+| Payment-absent saga failure | Explicit user consent received: atomically close `PENDING`/in-flight `APPROVED` budget in existing row. Approval and failure conditional update compete on same row; reread Payment after update and compensate if approval won. MP rollback cannot reopen/erase a cancelled Payment. Mock/unit tests cover ordering and guards; no claim of real PostgreSQL integration validation. | `test/compensar-falha-saga.spec.ts`, `src/modules/financeiro/application/use-cases/aprovar-orcamento.use-case.spec.ts`, and `src/modules/financeiro/infrastructure/repositories/financeiro.repositories.spec.ts` |
+
+Do not add Kafka event types, outbox/ProcessedEvent usage, credentials, infrastructure, or change public API. Do not relax CI gates. Focused tests first (RED then GREEN), followed by focused lint (without autofix), typecheck, and build. Full suite is deferred to parent reconciliation. Payment-absent closure reuses the existing REJECTED state; no sentinel, new table or schema state is introduced. There is no disposable test database configured in this isolated worktree; conditional SQL is unit-tested, not claimed as empirically verified under PostgreSQL concurrency.

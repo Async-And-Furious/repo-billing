@@ -12,6 +12,8 @@ describe('ConsultarPagamentoUseCase', () => {
     repository = {
       findByOrdemServicoId: jest.fn(),
       salvarCobranca: jest.fn(),
+      cancelarSePendente: jest.fn(),
+      estornarSeConfirmado: jest.fn(),
       salvarComNotificacao: jest.fn(),
       jaRecebida: jest.fn(),
       registrar: jest.fn(),

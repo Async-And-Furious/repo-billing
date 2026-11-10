@@ -3,10 +3,12 @@ import { PrismaService } from '../../../../shared/infrastructure/database/prisma
 import { PagamentoMapper } from '../persistence/financeiro.mapper';
 import { violouUnicidade } from '../persistence/prisma-errors';
 import type { Pagamento, StatusPagamento } from '../../domain/entities/pagamento.entity';
+import { StatusPagamento as Status } from '../../domain/entities/pagamento.entity';
 import type {
   IPagamentoRepository,
   NotificacaoRecebida,
 } from '../../domain/interfaces/financeiro.interfaces';
+import { ConflitoException } from '../../../../shared/domain/exceptions/conflito.exception';
 
 // Faz a transação desfazer o insert do webhook_recebido quando o Pagamento já mudou de status.
 class TransicaoConcorrente extends Error {}
@@ -21,13 +23,34 @@ export class PagamentoRepository implements IPagamentoRepository {
   }
 
   async salvarCobranca(pagamento: Pagamento): Promise<void> {
-    await this.prisma.pagamento.update({
-      where: { id: pagamento.getId() },
+    const { count } = await this.prisma.pagamento.updateMany({
+      where: { id: pagamento.getId(), status: Status.AGUARDANDO_PAGAMENTO },
       data: {
         preferenceId: pagamento.getPreferenceId(),
         linkPagamento: pagamento.getLinkPagamento(),
       },
     });
+    if (count === 0) {
+      throw new ConflitoException(
+        `O pagamento da OS ${pagamento.getOrdemServicoId()} foi cancelado.`
+      );
+    }
+  }
+
+  async cancelarSePendente(ordemServicoId: string): Promise<boolean> {
+    const { count } = await this.prisma.pagamento.updateMany({
+      where: { ordemServicoId, status: Status.AGUARDANDO_PAGAMENTO },
+      data: { status: Status.CANCELADO },
+    });
+    return count > 0;
+  }
+
+  async estornarSeConfirmado(ordemServicoId: string): Promise<boolean> {
+    const { count } = await this.prisma.pagamento.updateMany({
+      where: { ordemServicoId, status: Status.CONFIRMADO },
+      data: { status: Status.ESTORNADO },
+    });
+    return count > 0;
   }
 
   async salvarComNotificacao(
