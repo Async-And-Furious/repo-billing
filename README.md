@@ -210,6 +210,7 @@ Cadastre tudo no environment `hml` (Settings > Environments), e não no reposit�
 | `MP_ACCESS_TOKEN` | secret | painel do Mercado Pago, aba **Teste** (ADR-0022, ainda em Proposta) | `billing-secret` |
 | `MP_WEBHOOK_SECRET` | secret | chave de assinatura dos webhooks do Mercado Pago. Precisa ser a que assina as notificações **reais** (ver `.env.example`) | `billing-secret`, a partir do merge do #325 |
 | `JWT_PUBLIC_KEY_PARAMETER_NAME` | variável | nome do parâmetro SSM com a chave pública RS256 (a mesma usada pelo monólito) | `billing-secret` |
+| `NEW_RELIC_LICENSE_KEY` | secret | New Relic, **API Keys**, chave do tipo `INGEST - LICENSE` (a mesma do monólito) | `billing-secret` (#343) |
 | `MP_NOTIFICATION_URL` | variável | URL pública do webhook pelo Gateway: `https://<gateway>/api/v1/webhooks/mercado-pago` | `billing-config` (obrigatória) |
 | `KAFKA_BROKERS` | variável, opcional | padrão `kafka.kafka.svc.cluster.local:9092` (repo-k8s-infra) | `billing-config` |
 | `KAFKA_SASL_USERNAME` | variável, opcional | padrão `app` (usuário do `kafka-values.yaml`) | `billing-secret` |
@@ -278,6 +279,14 @@ O namespace `billing` e o ECR `tc3-billing-hml` são criados pelo `repo-k8s-infr
 - `async-furious-project` (#317): rota do Billing no API Gateway. `POST /api/v1/webhooks/mercado-pago` precisa ficar **sem** authorizer. Sem ela, `MP_NOTIFICATION_URL` não chega ao serviço.
 - `repo-billing` PR #1 (#325): entra antes deste PR. A partir dele, `MP_WEBHOOK_SECRET` é obrigatória no environment `hml`; sem ela, o `render-k8s.mjs` para o deploy antes de aplicar qualquer manifesto.
 - SonarCloud: criação do projeto e do token (ver acima).
+
+## Observabilidade
+
+- **APM:** agente `newrelic` carregado antes dos demais módulos (`src/main.ts`, a partir do #326), configurado só por ambiente, sem `newrelic.js` e sem OpenTelemetry. Em HML o app se chama `af-billing-hml`, ao lado de `async-furious-project-hml` (OS) e `af-execucao-hml`.
+- **Variáveis:** no `billing-config`, `NEW_RELIC_NO_CONFIG_FILE`, `NEW_RELIC_APP_NAME`, `NEW_RELIC_DISTRIBUTED_TRACING_ENABLED`, as de log (decoração local ligada e forwarding desligado, porque o Fluent Bit do cluster já envia os logs) e `NEW_RELIC_FEATURE_FLAG_KAFKAJS_INSTRUMENTATION=true`. A `NEW_RELIC_LICENSE_KEY` fica no `billing-secret`, vinda do secret do environment `hml`.
+- **Kafka:** na versão 14.x do agente, a instrumentação do `kafkajs` fica atrás dessa feature flag, desligada por padrão. Com ela ligada, o agente propaga o trace pelos headers das mensagens, e um trace iniciado no OS continua no consumo do Billing.
+- **Correlação:** os eventos carregam `correlationId` igual ao `ordemServicoId`, o que permite buscar nos logs a sequência de uma OS.
+- **Dashboard:** `tc3-observability-hml` no New Relic, mantido como código no `repo-k8s-infra`.
 
 ## Pendências conhecidas
 

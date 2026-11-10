@@ -100,6 +100,8 @@ jobs:
       MP_ACCESS_TOKEN: ${{ secrets.MP_ACCESS_TOKEN }}
       MP_NOTIFICATION_URL: ${{ vars.MP_NOTIFICATION_URL }}
       MP_WEBHOOK_SECRET: ${{ secrets.MP_WEBHOOK_SECRET }}
+      # New Relic (#343): a mesma license key do monólito.
+      NEW_RELIC_LICENSE_KEY: ${{ secrets.NEW_RELIC_LICENSE_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
