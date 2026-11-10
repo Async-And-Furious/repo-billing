@@ -6,8 +6,11 @@ import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AuthModule } from '../../../../auth/auth.module';
-import { JwtAuthGuard } from '../../../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../auth/guards/roles.guard';
+import { JwtAndThrottlingGuard } from '../../../../shared/infrastructure/throttling/jwt-and-throttling.guard';
+import { AuthenticatedThrottlerGuard } from '../../../../shared/infrastructure/throttling/authenticated-throttler.guard';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { THROTTLER_GLOBAL } from '../../../../shared/infrastructure/throttling/throttler.config';
 import { FinanceiroModule } from '../../financeiro.module';
 import { GlobalExceptionFilter } from '../../../../shared/infrastructure/filters/global-exception.filter';
 import { Orcamento, StatusOrcamento } from '../../domain/entities/orcamento.entity';
@@ -147,10 +150,13 @@ describe('Rotas do Billing', () => {
           ],
         }),
         AuthModule,
+        ThrottlerModule.forRoot([{ name: THROTTLER_GLOBAL, ttl: 60000, limit: 100 }]),
         FinanceiroModule,
       ],
       providers: [
-        { provide: APP_GUARD, useClass: JwtAuthGuard },
+        AuthenticatedThrottlerGuard,
+        JwtAndThrottlingGuard,
+        { provide: APP_GUARD, useExisting: JwtAndThrottlingGuard },
         { provide: APP_GUARD, useClass: RolesGuard },
       ],
     })
