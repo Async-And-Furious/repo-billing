@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { recordCustomEvent } from 'newrelic';
+import newrelic from 'newrelic';
 
 export type SagaStepOutcome = 'SUCCESS' | 'FAILED';
 
@@ -13,7 +13,9 @@ export const recordSagaStep = (
   startedAt: number
 ): void => {
   try {
-    recordCustomEvent('SagaStep', {
+    // Chamado pelo objeto do agente: `recordCustomEvent` lê `this.agent`, e o import nomeado
+    // compila para `(0, newrelic_1.recordCustomEvent)(...)`, sem `this` (TypeError com o agente ligado).
+    newrelic.recordCustomEvent('SagaStep', {
       ordemServicoId,
       service: 'billing',
       step,

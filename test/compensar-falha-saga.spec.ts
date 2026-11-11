@@ -50,10 +50,23 @@ describe('CompensarFalhaSagaHandler', () => {
     };
   };
 
-  it('closes pending budget when saga failure arrives before payment exists', async () => {
+  it('closes the pending budget on an orcamento failure without touching payments (#326)', async () => {
     const { handler, repository, gateway, orcamentoRepository } = setup(null);
     await handler.execute({ ordemServicoId: 'os-1', etapa: 'orcamento' });
+    expect(orcamentoRepository.encerrarSeAberto).toHaveBeenCalledWith('os-1');
+    expect(repository.findByOrdemServicoId).not.toHaveBeenCalled();
+    expect(gateway.estornar).not.toHaveBeenCalled();
+  });
+
+  it.each(['diagnostico', 'reparo'])('ignores etapa=%s', async (etapa) => {
+    const { handler, repository, orcamentoRepository } = setup(null);
+    await handler.execute({ ordemServicoId: 'os-1', etapa });
     expect(orcamentoRepository.encerrarSeAberto).not.toHaveBeenCalled();
+    expect(repository.findByOrdemServicoId).not.toHaveBeenCalled();
+  });
+
+  it('closes pending budget when saga failure arrives before payment exists', async () => {
+    const { handler, repository, gateway, orcamentoRepository } = setup(null);
     await handler.execute({ ordemServicoId: 'os-1', etapa: 'inicio-execucao' });
     expect(repository.findByOrdemServicoId).toHaveBeenCalledTimes(1);
     expect(orcamentoRepository.encerrarSeAberto).toHaveBeenCalledWith('os-1');
