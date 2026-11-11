@@ -45,7 +45,15 @@ describe('Billing Kafka adapter contract', () => {
     expect(billingKafkaSendRequest(BILLING_TOPIC, 'os-1', envelope)).toEqual({
       topic: BILLING_TOPIC,
       acks: -1,
-      messages: [{ key: 'os-1', value: JSON.stringify(envelope) }],
+      // Agente desligado nos testes: sem transação, os headers de trace saem vazios.
+      messages: [{ key: 'os-1', value: JSON.stringify(envelope), headers: {} }],
     });
+  });
+
+  it('grava os headers de trace recebidos na mensagem (#343)', () => {
+    const headers = { traceparent: '00-abc-def-01', newrelic: 'payload' };
+    expect(billingKafkaSendRequest(BILLING_TOPIC, 'os-1', {}, headers).messages[0].headers).toEqual(
+      headers
+    );
   });
 });

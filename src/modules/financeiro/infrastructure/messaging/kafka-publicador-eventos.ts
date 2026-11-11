@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Kafka, type Producer } from 'kafkajs';
 import { randomUUID } from 'node:crypto';
+import { injetarHeadersTrace } from '../../../../shared/infrastructure/observability/kafka-trace';
 import type {
   EventoBilling,
   IPublicadorEventos,
@@ -12,10 +13,17 @@ export const BILLING_PRODUCER_OPTIONS = {
   allowAutoTopicCreation: false,
 } as const;
 
-export const billingKafkaSendRequest = (topic: string, key: string | null, envelope: unknown) => ({
+// Headers de trace da transação ativa (traceparent, tracestate, newrelic): o consumidor do OS e
+// do Execução liga o consumo ao trace do Billing (#343/#344). Fora de transação, vazio.
+export const billingKafkaSendRequest = (
+  topic: string,
+  key: string | null,
+  envelope: unknown,
+  headers: Record<string, string> = injetarHeadersTrace()
+) => ({
   topic,
   acks: -1 as const,
-  messages: [{ key, value: JSON.stringify(envelope) }],
+  messages: [{ key, value: JSON.stringify(envelope), headers }],
 });
 
 export function billingKafkaConfig(env: NodeJS.ProcessEnv = process.env) {
