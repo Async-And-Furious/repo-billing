@@ -61,9 +61,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       }
 
       error = this.normalizeErrorName(error);
-    } else if (exception instanceof Error) {
-      message = exception.message;
     }
+    // Erro não tratado (banco, driver, bug) responde só a mensagem padrão: o texto original pode
+    // trazer host, tabela ou campo (#378, mesmo problema do item 4 no OS Service). O detalhe
+    // fica no log, em `err`.
 
     const errorResponse: ErrorResponse = {
       statusCode,
