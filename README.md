@@ -1,5 +1,7 @@
 # repo-billing-service
 
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=Async-And-Furious_repo-billing&metric=coverage)](https://sonarcloud.io/summary/new_code?id=Async-And-Furious_repo-billing) [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=Async-And-Furious_repo-billing&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Async-And-Furious_repo-billing)
+
 Billing Service (Orçamento e Pagamento) do Tech Challenge Fase 4 (FIAP SOAT). Feature #323 do repositório `async-furious-project`, dentro do Epic #322.
 
 Stack: NestJS 10, Prisma 5, PostgreSQL, Node 22, pnpm. Quatro camadas por módulo (`domain`, `application`, `infrastructure`, `presentation`) mais `shared/` (ADR-0006).
@@ -148,6 +150,14 @@ A aprovação de orçamento chama o Mercado Pago: configure `MP_ACCESS_TOKEN` (c
 A integração com o Mercado Pago está decidida na [ADR-0022](https://github.com/Async-And-Furious/async-furious-project/blob/develop/docs/adr/0022-integracao-mercado-pago-checkout-pro.md) do `async-furious-project` (este repositório não tem `docs/adr`). A ADR foi escrita para o monólito: aqui o código foi copiado do módulo `financeiro` do OS Service (PR #366) e adaptado ao schema do #324.
 
 Qualidade: `pnpm exec eslint "{src,test}/**/*.ts"` (sem `--fix`; `pnpm lint` corrige arquivos), `pnpm type:check`, `pnpm test:cov` (gate de 80/80/80/80 no `jest.config.js`, igual ao OS Service) e `pnpm build`. O job `tests` da esteira roda o mesmo conjunto.
+
+## Cobertura de testes (#351)
+
+Mínimo de 80% em statements, branches, functions e lines (`jest.config.js`, ADR-0014 do `async-furious-project`), verificado pelo `pnpm test:cov` do job `tests` do `ci.yml` em todo PR. Badge e relatório no [SonarCloud](https://sonarcloud.io/summary/new_code?id=Async-And-Furious_repo-billing). Última coleta no CI (push na `main`):
+
+| Data | Execução | Commit | Statements | Branches | Functions | Lines |
+|---|---|---|---|---|---|---|
+| 11/11/2026 | [ci.yml #42920925193](https://github.com/Async-And-Furious/repo-billing/actions/runs/42920925193) | `d288736` | 93,59% | 85,22% | 93,33% | 94,20% |
 
 ## Esteira de CI/CD (#327)
 
