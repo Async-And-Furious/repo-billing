@@ -25,6 +25,8 @@ export default {
   ],
   coverageDirectory: './coverage',
   testEnvironment: 'node',
+  // Agente desligado em toda a suíte: o kafka-trace importa `newrelic`, que tentaria subir sem config.
+  setupFiles: ['<rootDir>/test/support/newrelic-desligado.ts'],
   testPathIgnorePatterns: ['/node_modules/', '/dist/', 'jest-e2e.json'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
