@@ -6,6 +6,9 @@ metadata:
 data:
   NODE_ENV: production
   PORT: '3000'
+  # Proxies na frente do pod: API Gateway (VPC Link) e ALB interno. O Express lê o IP real do
+  # cliente no X-Forwarded-For para o throttling das rotas públicas (#378, item 14).
+  TRUST_PROXY_HOPS: '2'
   JWT_ALGORITHM: RS256
   JWT_ISSUER: repo-auth-serverless
   JWT_AUDIENCE: async-furious-project

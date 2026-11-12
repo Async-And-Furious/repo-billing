@@ -68,8 +68,20 @@ describe('GlobalExceptionFilter', () => {
     filter.catch(new Error('boom'), host({ url: '/y' }));
     expect(status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
     expect(json.mock.calls[0][0]).not.toHaveProperty('correlationId');
-    expect(json.mock.calls[0][0]).toMatchObject({ message: 'boom' });
+    expect(json.mock.calls[0][0]).toMatchObject({ message: 'Internal server error' });
     expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('500 não tratado não vaza a mensagem interna; o detalhe vai só para o log (#378)', () => {
+    const erro = new Error("Can't reach database server at tc3-db-hml.internal:5432");
+    filter.catch(erro, host());
+    const corpo = json.mock.calls[0][0] as Record<string, unknown>;
+    expect(corpo.message).toBe('Internal server error');
+    expect(JSON.stringify(corpo)).not.toContain('tc3-db-hml');
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: erro }),
+      expect.any(String)
+    );
   });
 
   it('valor desconhecido vira 500 com mensagem padrao', () => {

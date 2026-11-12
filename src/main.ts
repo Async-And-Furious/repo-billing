@@ -1,15 +1,19 @@
 import 'newrelic';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { buildSwaggerConfig } from './swagger.config';
+import { trustProxyHops } from './shared/infrastructure/http/trust-proxy';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
+  // IP real do cliente atrás do API Gateway e do ALB, para o throttling por IP (#378, item 14).
+  app.set('trust proxy', trustProxyHops());
 
   // CSP: unsafe-inline necessario para o Swagger UI (mesmo trade-off do OS Service).
   app.use(
