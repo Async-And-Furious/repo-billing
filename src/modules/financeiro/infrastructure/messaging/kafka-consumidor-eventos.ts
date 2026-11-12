@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Kafka, type Consumer } from 'kafkajs';
+import { comTransacaoDeConsumo } from '../../../../shared/infrastructure/observability/kafka-trace';
 import { randomUUID } from 'node:crypto';
 import { DomainException } from '../../../../shared/domain/exceptions/domain.exception';
 import { CompensarFalhaSagaHandler } from '../../application/event-handlers/compensar-falha-saga.handler';
@@ -441,12 +442,16 @@ export class KafkaConsumidorEventos implements OnModuleInit, OnModuleDestroy {
     }
     await this.consumer.run({
       // State and retry/DLT publishes finish before eachMessage resolves, so KafkaJS commits afterward.
+      // Cada mensagem vira uma background transaction ligada ao trace do publicador (#343/#344);
+      // os erros propagam, então retry e DLT seguem iguais.
       eachMessage: async (payload) =>
-        this.processor.process(
-          payload.topic,
-          payload.message.key?.toString() ?? null,
-          payload.message.value,
-          () => payload.heartbeat()
+        comTransacaoDeConsumo(payload.topic, payload.message.headers, () =>
+          this.processor.process(
+            payload.topic,
+            payload.message.key?.toString() ?? null,
+            payload.message.value,
+            () => payload.heartbeat()
+          )
         ),
     });
   }

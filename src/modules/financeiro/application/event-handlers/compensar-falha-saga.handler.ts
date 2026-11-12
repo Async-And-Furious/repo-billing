@@ -6,7 +6,11 @@ import type {
   IPagamentoRepository,
 } from '../../domain/interfaces/financeiro.interfaces';
 
+// Etapas em que o pagamento pode existir: cancela o pendente ou estorna o capturado.
 const ETAPAS_COMPENSAVEIS = new Set(['aprovacao-pagamento', 'inicio-execucao']);
+// Falha no orçamento: o OS fecha a OS, e o orçamento PENDING não pode seguir aprovável e
+// cobrável. Ainda não existe pagamento, então só encerra o orçamento, sem Mercado Pago (#326).
+const ETAPAS_SO_ORCAMENTO = new Set(['orcamento']);
 
 export class CompensarFalhaSagaHandler {
   constructor(
@@ -16,6 +20,10 @@ export class CompensarFalhaSagaHandler {
   ) {}
 
   async execute(evento: Pick<EtapaDaSagaFalhou, 'ordemServicoId' | 'etapa'>): Promise<void> {
+    if (ETAPAS_SO_ORCAMENTO.has(evento.etapa)) {
+      await this.orcamentos.encerrarSeAberto(evento.ordemServicoId);
+      return;
+    }
     if (!ETAPAS_COMPENSAVEIS.has(evento.etapa)) return;
 
     await this.orcamentos.encerrarSeAberto(evento.ordemServicoId);
