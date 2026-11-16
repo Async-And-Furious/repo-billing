@@ -153,9 +153,16 @@ jobs:
             k8s/target-group-binding.yaml k8s/hpa.yaml
 
       - name: Aplicar ConfigMap e Secret
+        id: config
         run: |
           set -euo pipefail
-          kubectl apply -f "$RUNNER_TEMP/k8s/configmap.yaml" -f "$RUNNER_TEMP/k8s/secret.yaml"
+          saida=$(kubectl apply -f "$RUNNER_TEMP/k8s/configmap.yaml" -f "$RUNNER_TEMP/k8s/secret.yaml")
+          echo "$saida"
+          # O pod lê ConfigMap e Secret como env só ao subir: se mudaram, o rollout precisa
+          # reiniciar os pods mesmo quando a imagem (e o Deployment) não mudou.
+          if grep -qE ' (configured|created)$' <<<"$saida"; then
+            echo "mudou=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Migration (prisma migrate deploy antes do rollout)
         run: |
@@ -182,9 +189,17 @@ jobs:
           kubectl logs job/billing-seed-hml --namespace billing --all-containers=true
 
       - name: Rollout do Billing (Deployment, Service, TargetGroupBinding e HPA)
+        env:
+          CONFIG_MUDOU: ${{ steps.config.outputs.mudou }}
         run: |
           set -euo pipefail
-          kubectl apply -f "$RUNNER_TEMP/k8s/deployment.yaml"
+          saida=$(kubectl apply -f "$RUNNER_TEMP/k8s/deployment.yaml")
+          echo "$saida"
+          # Mesma imagem + Secret/ConfigMap novos: o apply não troca os pods, então reinicia.
+          if [[ "$CONFIG_MUDOU" == 'true' && "$saida" == *' unchanged' ]]; then
+            echo 'ConfigMap/Secret mudaram com o Deployment igual: reiniciando os pods.'
+            kubectl rollout restart deployment/billing-api --namespace billing
+          fi
           kubectl apply -f "$RUNNER_TEMP/k8s/service.yaml"
           kubectl apply -f "$RUNNER_TEMP/k8s/target-group-binding.yaml"
           kubectl apply -f "$RUNNER_TEMP/k8s/hpa.yaml"
